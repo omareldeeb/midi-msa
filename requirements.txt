@@ -1,0 +1,9 @@
+mido
+matplotlib
+numpy
+pandas
+tqdm
+torch
+torchvision
+tensorboard
+librosa
