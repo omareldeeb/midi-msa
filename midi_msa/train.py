@@ -21,8 +21,8 @@ def parse_args():
     )
     parser.add_argument("--window-half-ticks", type=int, default=256,
                         help="Half window size in ticks for each patch")
-    parser.add_argument("--pretrain", type=str, required=True,
-                        help="Pretrained model identifier")
+    parser.add_argument("--pretrained", action="store_true",
+                        help="Whether to use pre-trained weights for mobilenet")
     parser.add_argument("--instrument-overtones", action="store_true",
                         help="Whether to use instrument overtone encoding")
     parser.add_argument("--patch-normalize", action="store_true",
@@ -113,7 +113,7 @@ def main():
     model_dir = Path(args.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
     model_name = (
-        f"pretrain_{args.pretrain}_"
+        f"pretrain_{args.pretrained}_"
         f"mn_overtones_{args.instrument_overtones}_"
         f"normalized_{int(args.patch_normalize)}_"
         f"separate_drums_{int(args.separate_drums)}_"
@@ -121,7 +121,7 @@ def main():
     )
     checkpoint_path = model_dir / model_name
 
-    model = BoundaryClassifier(num_targets=args.num_targets).to(device)
+    model = BoundaryClassifier(num_targets=args.num_targets, pretrained=pretrained).to(device)
     if args.resume and checkpoint_path.exists():
         print(f"Loading model from {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path))

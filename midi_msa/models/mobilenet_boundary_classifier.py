@@ -3,10 +3,10 @@ import torchvision.models
 
 # Simple CNN boundary classifier
 class MobileNetBoundaryClassifier(nn.Module):
-    def __init__(self, num_targets=1):
+    def __init__(self, num_targets=1, pretrained=True):
         super().__init__()
 
-        weights = torchvision.models.MobileNet_V3_Small_Weights.DEFAULT
+        weights = torchvision.models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         backbone = torchvision.models.mobilenet_v3_small(weights=weights)
         backbone.classifier[-1] = nn.Sequential(
             nn.Linear(backbone.classifier[-1].in_features, num_targets),
