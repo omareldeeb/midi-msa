@@ -1,6 +1,6 @@
 # Barwise Section Boundary Detection in Symbolic Music Using CNNs
 
-<img src="res/patch_ca05cc474fd2010484c1201bf57b3cfd_8x_res.png" alt="Patch Example" width="480" height="120"/>
+<img src="res/patch_ca05cc474fd2010484c1201bf57b3cfd_8x_res.png" alt="Patch Example" width="960" height="240"/>
 
 This repository contains accompanying code for the paper "Barwise Section Boundary Detection in Symbolic Music Using Convolutional Neural Networks".
 Models were trained and evaluated on the [SLMS dataset](https://github.com/m-malandro/SLMS).
