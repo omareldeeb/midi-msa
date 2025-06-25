@@ -198,8 +198,7 @@ def create_lakh_dataset(
     markers_qn_path: Union[Path, str],
     target_ticks_per_beat: int = 4,
     instrument_overtones: bool = True,
-    separate_drums: bool = True,
-    window_half_ticks: int = 256,
+    separate_drums: bool = True
 ):
     """
     Loads MIDI files from the Lakh MIDI dataset, processes them into piano rolls,
@@ -292,11 +291,6 @@ def create_lakh_dataset(
             piano_roll = torch.stack(piano_rolls)
             # Merge channels
             piano_roll = piano_roll.sum(dim=0).clamp(0, 127)
-
-            # Additionally pad 4 bars to each side to allow for segment extraction
-            # piano_roll = torch.nn.functional.pad(piano_roll, (WINDOW_HALF_TICKS, WINDOW_HALF_TICKS))
-            # markers_ticks = [marker + WINDOW_HALF_TICKS for marker in markers_ticks]
-            # measure_ticks = [measure_tick + WINDOW_HALF_TICKS for measure_tick in measure_ticks]
 
             torch.save({
                 "piano_roll": piano_roll.to(torch.float32),
