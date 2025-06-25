@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument("--separate-drums", action="store_true",
                         help="Train separate drum patches")
     parser.add_argument("--num-targets", type=int, default=1,
-                        help="Number of target classes")
+                        help="Can be used to define additional targets within 2**i bars of center where i < num_targets")
     parser.add_argument("--drop-boundary-patches", action="store_true"
                         help="Pad boundary patches to full window size")
 
@@ -121,7 +121,7 @@ def main():
     )
     checkpoint_path = model_dir / model_name
 
-    model = BoundaryClassifier(num_targets=args.num_targets, pretrained=pretrained).to(device)
+    model = BoundaryClassifier(num_targets=args.num_targets, pretrained=args.pretrained).to(device)
     if args.resume and checkpoint_path.exists():
         print(f"Loading model from {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path))
