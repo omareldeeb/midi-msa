@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Union
 
 import mido
 import numpy as np
+import scipy.fftpack
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -422,3 +423,77 @@ def get_piano_roll_patches(
 
         piano_roll_idx += 1
     return piano_rolls, patch_data
+
+
+def concatenate_time_frames_torch(tensor, m=2):
+    freq, time = tensor.shape[-2], tensor.shape[-1]
+    # Append m-1 frames to the end of the tensor (circulant)
+    tensor = torch.cat([tensor, tensor[..., :m]], dim=-1)
+    stacked_frames = torch.cat([tensor[..., :, i:time-m+2+i] for i in range(m+1)], dim=-2)
+
+    return stacked_frames
+
+
+def compute_sslm(piano_roll: torch.Tensor, L: int = 112) -> torch.Tensor:
+    piano_roll = torch.tensor(piano_roll, dtype=torch.float32)
+
+    # "In order to reduce the amount of data and processing time, the input spectra can be max-pooled along the time axis by an integer factor p = 2"
+    # x_prime = torch.nn.functional.max_pool2d(piano_roll, (1, p))
+    x_prime = piano_roll
+
+    # "By performing a DCT of type II on each frame with the static 0-component omitted, we arrive at a time series of MFCCs"
+    mfcc = scipy.fftpack.dct(x_prime.numpy(force=True), type=2, axis=-2, norm='ortho')[..., 1:, :]
+    mfcc = torch.tensor(mfcc)
+
+    # We bag several frames within a time context of length m, building a time series
+    m = 2
+    bagged_mfcc = concatenate_time_frames_torch(mfcc, m=m)
+
+    T = bagged_mfcc.shape[-1]
+
+    # flatten all leading dims into one “feature” dimension F_total
+    F_total = int(torch.tensor(bagged_mfcc.shape[:-1]).prod().item())
+    X = bagged_mfcc.reshape(F_total, T) # [F_total, T]
+
+    # normalize each time‐frame vector
+    X_norm = torch.nn.functional.normalize(X, dim=0)    # [F_total, T]
+
+    # build full cosine‐similarity matrix
+    # sims[i,j] = cos( X_norm[:,i], X_norm[:,j] )
+    sims = X_norm.T @ X_norm    # [T, T]
+    dists = 1.0 - sims  # [T, T]
+
+    # build index grids to extract D[l, i] = dists[i, (i-l)%T]
+    # max_lag = L // p
+    max_lag = L
+    lags   = torch.arange(max_lag, device=X.device)
+    i_idx  = torch.arange(T, device=X.device).unsqueeze(0)      # [1, T]
+    j_idx  = (i_idx - lags.unsqueeze(1)) % T                    # [max_lag, T]
+
+    D = dists[i_idx.expand(max_lag, T), j_idx]  # [max_lag, T]
+    D_t = D.T   # [T, max_lag]
+
+    max_lag, T = D.shape
+    # print(max_lag, T)
+
+    # replicate row i distances across the lag‐axis:
+    orig = D_t.unsqueeze(1).expand(-1, max_lag, -1) # [T, max_lag, max_lag]
+
+    # for each lag l, roll the time-axis so row i -> row i-l:
+    rolled = torch.stack([
+        torch.roll(D_t, shifts=-l, dims=0) 
+        for l in range(max_lag)
+    ], dim=1)   # [T, max_lag, max_lag]
+
+    # concatenate along the features axis (the j‐axis) to get 2·max_lag values:
+    combined = torch.cat([orig, rolled], dim=2) # [T, max_lag, 2*max_lag]
+
+    # compute the k-quantile along that last axis for each (i, l):
+    k = 0.1
+    eps = torch.quantile(combined, q=k, dim=2)  # [T, max_lag]
+
+    # smooth step from Eq. 5:
+    R_t = torch.sigmoid(1.0 - D_t / eps)    # [T, max_lag]
+    R = R_t.T   # [max_lag, T]
+    
+    return R
