@@ -5,6 +5,9 @@
 This repository contains accompanying code for the ISMIR 2025 paper "Barwise Section Boundary Detection in Symbolic Music Using Convolutional Neural Networks".
 Models were trained and evaluated on the [SLMS dataset](https://github.com/m-malandro/SLMS).
 
+- Paper
+- [SLMS dataset](https://github.com/m-malandro/SLMS)
+
 ## Notebooks
 - `training.ipynb`: This notebook handles data preparation and training. It can be executed from top to bottom to train a MIDI section boundary detection model on the SLMS dataset. It only expects the full [LMD dataset](https://colinraffel.com/projects/lmd/#get) containing original MIDI files to be downloaded and extracted in `data/lmd_full`, as well as the SLMS metadata json files to be in the `data` directory.
 - `evaluation.ipynb`: This notebook evaluates the trained model on the SLMS dataset. It expects the four models to ensemble (see paper) to be in the `models/` directory and the SLMS metadata json files to be in the `data` directory. Evaluating different models can be done by changing the `model_paths` variable in the notebook.
