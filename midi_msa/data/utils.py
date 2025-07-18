@@ -1,6 +1,7 @@
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -10,6 +11,13 @@ import scipy.fftpack
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+
+
+@dataclass
+class PatchData:
+    piano_rolls: List[torch.Tensor]
+    patch_metadata: Dict
+    sslm_patches: Optional[List[torch.Tensor]] = None
 
 
 def parse_midi(file_path: Union[Path, str]):
@@ -305,11 +313,12 @@ def get_piano_roll_patches(
     window_half_ticks: int = 256,
     positive_oversampling_factor: int = 2,
     negative_undersampling_factor: int = 1,
-    pad_boundary_patches: bool = True
-):
+    pad_boundary_patches: bool = True,
+    return_sslms: bool = False
+) -> PatchData:
     """
-    Load piano rolls from the specified paths, process them, and return a list of piano rolls
-    and a dictionary of patch data.
+    Load piano rolls from the specified paths, process them, and return a PatchData object
+    containing piano rolls, patch metadata, and optionally SSLM patches.
     Handles positive oversampling and negative undersampling and pads the piano rolls if specified.
     """
     if isinstance(data_dir, str):
@@ -327,6 +336,7 @@ def get_piano_roll_patches(
     padding = window_half_ticks
 
     piano_rolls = []
+    sslms = []
     patch_data = {}
     sample_idx = 0
     piano_roll_idx = 0
@@ -393,6 +403,11 @@ def get_piano_roll_patches(
 
         piano_rolls.append(piano_roll)
 
+        # TODO: SSLMs should be precomputed and saved like the piano rolls
+        if return_sslms:
+            sslm = compute_sslm(piano_roll, L=112)  # TODO: L hardcoded for now
+            sslms.append(sslm)
+
         for i in measure_boundaries:
             if not pad_boundary_patches and (i - padding <= 0 or i + padding >= piano_roll.shape[-1]):
                 continue
@@ -416,13 +431,22 @@ def get_piano_roll_patches(
                 # New: nearest segment boundary
                 "nearest_segment_boundary": nearest_segment_boundary
             }
+            
+            # Add SSLM patch index if we're returning SSLMs
+            if return_sslms:
+                sample["sslm_patch_idx"] = piano_roll_idx
 
             for _ in range(repetitions):
                 patch_data[sample_idx] = sample
                 sample_idx += 1
 
         piano_roll_idx += 1
-    return piano_rolls, patch_data
+    
+    return PatchData(
+        piano_rolls=piano_rolls,
+        patch_metadata=patch_data,
+        sslm_patches=sslms if return_sslms else None
+    )
 
 
 def concatenate_time_frames_torch(tensor, m=2):

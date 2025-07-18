@@ -1,7 +1,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Union
+from typing import Union, Any
 
 import pandas as pd
 import torch
@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from midi_msa.data.piano_roll_dataset import PianoRollDataset
-from midi_msa.data.utils import get_piano_roll_patches
+from midi_msa.data.utils import get_piano_roll_patches, PatchData
 from midi_msa.models.mobilenet_boundary_classifier import MobileNetBoundaryClassifier as BoundaryClassifier
 from midi_msa.evaluation.metrics import compute_metrics
 
@@ -31,8 +31,10 @@ def parse_args():
                         help="Train separate drum patches")
     parser.add_argument("--num-targets", type=int, default=1,
                         help="Can be used to define additional targets within 2**i bars of center where i < num_targets")
-    parser.add_argument("--drop-boundary-patches", action="store_true"
+    parser.add_argument("--drop-boundary-patches", action="store_true",
                         help="Pad boundary patches to full window size")
+    parser.add_argument("--use-sslm", action="store_true",
+                        help="Use SSLM (Self-Supervised Learning Model) patches for training")
 
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for training and validation")
@@ -67,16 +69,23 @@ def get_dataloaders(
     negative_undersampling_factor: int,
     pad_boundary_patches: bool,
     batch_size: int,
-    patch_normalize: bool
+    patch_normalize: bool,
+    use_sslm: bool = False,
+    num_targets: int = 1
 ):
-    piano_rolls, patch_data = get_piano_roll_patches(
+    patch_data = get_piano_roll_patches(
         data_dir=data_dir,
         window_half_ticks=window_half_ticks,
         positive_oversampling_factor=positive_oversampling_factor,
         negative_undersampling_factor=negative_undersampling_factor,
-        pad_boundary_patches=pad_boundary_patches
+        pad_boundary_patches=pad_boundary_patches,
+        return_sslms=use_sslm
     )
-    metadata_df = pd.DataFrame.from_dict(patch_data, orient='index').sample(frac=1)
+    
+    piano_rolls = patch_data.piano_rolls
+    metadata_dict = patch_data.patch_metadata
+    sslm_patches = patch_data.sslm_patches
+    metadata_df = pd.DataFrame.from_dict(metadata_dict, orient='index').sample(frac=1)
     
     metadata_df = metadata_df.sample(frac=1)
     metadata_train = metadata_df[metadata_df["key"].isin(["tubb_train", "non_tubb_train"])]
@@ -86,13 +95,28 @@ def get_dataloaders(
     metadata_val_tubb.reset_index(drop=True, inplace=True)
     metadata_val_non_tubb.reset_index(drop=True, inplace=True)
 
-    dataset_train = PianoRollDataset(piano_rolls, metadata_train, normalize=patch_normalize)
+    dataset_train = PianoRollDataset(
+        piano_rolls, metadata_train, 
+        normalize=patch_normalize, 
+        num_targets=num_targets,
+        sslm_patches=sslm_patches
+    )
     dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
 
-    dataset_val_tubb = PianoRollDataset(piano_rolls, metadata_val_tubb, normalize=patch_normalize)
+    dataset_val_tubb = PianoRollDataset(
+        piano_rolls, metadata_val_tubb, 
+        normalize=patch_normalize, 
+        num_targets=num_targets,
+        sslm_patches=sslm_patches
+    )
     dataloader_val_tubb = DataLoader(dataset_val_tubb, batch_size=batch_size, shuffle=False)
 
-    dataset_val_non_tubb = PianoRollDataset(piano_rolls, metadata_val_non_tubb, normalize=patch_normalize)
+    dataset_val_non_tubb = PianoRollDataset(
+        piano_rolls, metadata_val_non_tubb, 
+        normalize=patch_normalize, 
+        num_targets=num_targets,
+        sslm_patches=sslm_patches
+    )
     dataloader_val_non_tubb = DataLoader(dataset_val_non_tubb, batch_size=batch_size, shuffle=False)
 
     return dataloader_train, dataloader_val_tubb, dataloader_val_non_tubb
@@ -117,11 +141,16 @@ def main():
         f"mn_overtones_{args.instrument_overtones}_"
         f"normalized_{int(args.patch_normalize)}_"
         f"separate_drums_{int(args.separate_drums)}_"
+        f"use_sslm_{int(args.use_sslm)}_"
         f"targets_{args.num_targets}.pt"
     )
     checkpoint_path = model_dir / model_name
 
-    model = BoundaryClassifier(num_targets=args.num_targets, pretrained=args.pretrained).to(device)
+    model = BoundaryClassifier(
+        num_targets=args.num_targets, 
+        pretrained=args.pretrained, 
+        use_sslm=args.use_sslm
+    ).to(device)
     if args.resume and checkpoint_path.exists():
         print(f"Loading model from {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path))
@@ -148,7 +177,9 @@ def main():
         negative_undersampling_factor=args.negative_undersampling_factor,
         pad_boundary_patches=args.drop_boundary_patches,
         batch_size=args.batch_size,
-        patch_normalize=args.patch_normalize
+        patch_normalize=args.patch_normalize,
+        use_sslm=args.use_sslm,
+        num_targets=args.num_targets
     )
 
     for epoch in range(args.num_epochs):
@@ -162,11 +193,14 @@ def main():
                 negative_undersampling_factor=args.negative_undersampling_factor,
                 pad_boundary_patches=args.drop_boundary_patches,
                 batch_size=args.batch_size,
-                patch_normalize=args.patch_normalize
+                patch_normalize=args.patch_normalize,
+                use_sslm=args.use_sslm,
+                num_targets=args.num_targets
             )
 
         # Log example images
-        imgs, targets = next(iter(train_dataloader))
+        item = next(iter(train_dataloader))
+        imgs, targets = item.piano_roll_patch, item.targets
         for i in range(min(4, len(imgs))):
             writer.add_image(
                 tag=f"Train/Example_{i}_Label_{int(targets[i])}",
@@ -181,12 +215,11 @@ def main():
         step = 0
         for batch in (pbar := tqdm(train_dataloader)):
             pbar.set_description(f"Epoch {epoch + 1}/{args.num_epochs} - Training")
-            piano_roll, targets = batch
-            piano_roll, targets = piano_roll.to(device), targets.to(device)
+            batch = batch.to(device)
 
             optimizer.zero_grad()
-            output = model(piano_roll)
-            loss = criterion(output, targets.float().to(device))
+            output = model(batch)
+            loss = criterion(output, batch.targets.float())
             loss.backward()
             optimizer.step()
 
@@ -207,26 +240,24 @@ def main():
         val_loss_tubb, val_loss_non_tubb = 0, 0
         with torch.no_grad():
             for batch_tubb in val_dataloader_tubb:
-                piano_roll, targets = batch_tubb
-                piano_roll, targets = piano_roll.to(device), targets.to(device)
+                batch_tubb = batch_tubb.to(device)
 
-                output = model(piano_roll)
+                output = model(batch_tubb)
 
                 val_outputs_tubb.append(output)
-                val_targets_tubb.append(targets)
+                val_targets_tubb.append(batch_tubb.targets)
 
-                loss = criterion(output, targets.float().to(device))
+                loss = criterion(output, batch_tubb.targets.float())
                 val_loss_tubb += loss.item()
             for batch_non_tubb in val_dataloader_non_tubb:
-                piano_roll, targets = batch_non_tubb
-                piano_roll, targets = piano_roll.to(device), targets.to(device)
+                batch_non_tubb = batch_non_tubb.to(device)
 
-                output = model(piano_roll)
+                output = model(batch_non_tubb)
 
                 val_outputs_non_tubb.append(output)
-                val_targets_non_tubb.append(targets)
+                val_targets_non_tubb.append(batch_non_tubb.targets)
 
-                loss = criterion(output, targets.float().to(device))
+                loss = criterion(output, batch_non_tubb.targets.float())
                 val_loss_non_tubb += loss.item()
 
             val_loss_tubb /= len(val_dataloader_tubb)
@@ -288,8 +319,8 @@ def main():
     writer.close()
 
     # Save history
-    metrics_path_tubb = f"metrics_tubb_all_overtones_{args.instrument_overtones}_normalized_{int(args.patch_normalize)}_separate_drums_{int(args.separate_drums)}_targets_{args.num_targets}.json"
-    metrics_path_non_tubb = f"metrics_non_tubb_all_overtones_{args.instrument_overtones}_normalized_{int(args.patch_normalize)}_separate_drums_{int(args.separate_drums)}_targets_{args.num_targets}.json"
+    metrics_path_tubb = f"metrics_tubb_all_overtones_{args.instrument_overtones}_normalized_{int(args.patch_normalize)}_separate_drums_{int(args.separate_drums)}_use_sslm_{int(args.use_sslm)}_targets_{args.num_targets}.json"
+    metrics_path_non_tubb = f"metrics_non_tubb_all_overtones_{args.instrument_overtones}_normalized_{int(args.patch_normalize)}_separate_drums_{int(args.separate_drums)}_use_sslm_{int(args.use_sslm)}_targets_{args.num_targets}.json"
     json.dump(history, open(metrics_path_tubb, 'w'))
     json.dump(history, open(metrics_path_non_tubb, 'w'))
 
