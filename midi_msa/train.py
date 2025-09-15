@@ -200,7 +200,7 @@ def main():
 
         # Log example images
         item = next(iter(train_dataloader))
-        imgs, targets = item.piano_roll_patch, item.targets
+        imgs, targets = item.get("piano_roll_patch"), item.get("targets")
         for i in range(min(4, len(imgs))):
             writer.add_image(
                 tag=f"Train/Example_{i}_Label_{int(targets[i])}",
@@ -215,11 +215,11 @@ def main():
         step = 0
         for batch in (pbar := tqdm(train_dataloader)):
             pbar.set_description(f"Epoch {epoch + 1}/{args.num_epochs} - Training")
-            batch = batch.to(device)
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
             optimizer.zero_grad()
-            output = model(batch)
-            loss = criterion(output, batch.targets.float())
+            output = model(batch["piano_roll_patch"], batch.get("sslm_patch"))
+            loss = criterion(output, batch["targets"].float())
             loss.backward()
             optimizer.step()
 
@@ -240,24 +240,24 @@ def main():
         val_loss_tubb, val_loss_non_tubb = 0, 0
         with torch.no_grad():
             for batch_tubb in val_dataloader_tubb:
-                batch_tubb = batch_tubb.to(device)
+                batch_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_tubb.items()}
 
-                output = model(batch_tubb)
+                output = model(batch_tubb["piano_roll_patch"], batch_tubb.get("sslm_patch"))
 
                 val_outputs_tubb.append(output)
-                val_targets_tubb.append(batch_tubb.targets)
+                val_targets_tubb.append(batch_tubb["targets"])
 
-                loss = criterion(output, batch_tubb.targets.float())
+                loss = criterion(output, batch_tubb["targets"].float())
                 val_loss_tubb += loss.item()
             for batch_non_tubb in val_dataloader_non_tubb:
-                batch_non_tubb = batch_non_tubb.to(device)
+                batch_non_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_non_tubb.items()}
 
-                output = model(batch_non_tubb)
+                output = model(batch_non_tubb["piano_roll_patch"], batch_non_tubb.get("sslm_patch"))
 
                 val_outputs_non_tubb.append(output)
-                val_targets_non_tubb.append(batch_non_tubb.targets)
+                val_targets_non_tubb.append(batch_non_tubb["targets"])
 
-                loss = criterion(output, batch_non_tubb.targets.float())
+                loss = criterion(output, batch_non_tubb["targets"].float())
                 val_loss_non_tubb += loss.item()
 
             val_loss_tubb /= len(val_dataloader_tubb)

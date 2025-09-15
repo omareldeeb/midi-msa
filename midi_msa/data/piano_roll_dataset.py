@@ -5,20 +5,6 @@ import torch
 from torch.utils.data import Dataset
 
 
-@dataclass
-class PianoRollDatasetItem:
-    piano_roll_patch: torch.Tensor
-    targets: torch.Tensor
-    sslm_patch: Optional[torch.Tensor] = None
-
-    def to(self, device: torch.device):
-        self.piano_roll_patch = self.piano_roll_patch.to(device)
-        self.targets = self.targets.to(device)
-        if self.sslm_patch is not None:
-            self.sslm_patch = self.sslm_patch.to(device)
-        return self
-
-
 def transpose_augmentation(piano_roll, transpose_range=6):
     transpose_amount = torch.randint(-transpose_range, transpose_range, ())
     return torch.roll(piano_roll, transpose_amount.item(), dims=-2) # type: ignore
@@ -48,10 +34,11 @@ class PianoRollDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.metadata_df.loc[idx]
-        piano_roll = self.piano_roll_patches[sample["piano_roll_idx"]]
-        piano_roll_patch = piano_roll[..., sample["from"].int():sample["to"].int()]
+        piano_roll = self.piano_roll_patches[sample["piano_roll_idx"]].squeeze()
+        from_tick, to_tick = sample["from"].int(), sample["to"].int()
+        piano_roll_patch = piano_roll[..., from_tick:to_tick]
 
-        center = sample["from"] + (sample["to"] - sample["from"]) / 2
+        center = from_tick + (to_tick - from_tick) / 2
         nearest_segment_boundary = sample["nearest_segment_boundary"]
 
         # targets: boundary at center? boundary within (2, 4, 8) bars of center?
@@ -67,15 +54,19 @@ class PianoRollDataset(Dataset):
         if self.transpose_augmentation:
             piano_roll_patch = transpose_augmentation(piano_roll_patch)
 
-        sslm_patch = None
-        if self.sslm_patches is not None:
-            sslm_patch = self.sslm_patches[sample["sslm_patch_idx"]]
+        item = {
+            "piano_roll_patch": piano_roll_patch,
+            "targets": targets,
+        }
 
-        return PianoRollDatasetItem(
-            piano_roll_patch=piano_roll_patch,
-            targets=targets,
-            sslm_patch=sslm_patch
-        )
+        if self.sslm_patches is not None:
+            sslm = self.sslm_patches[sample["sslm_patch_idx"]]
+            if len(sslm.shape) == 2:
+                sslm = sslm.unsqueeze(0)  # Add channel dimension if missing
+            sslm_patch = sslm[..., from_tick:to_tick]
+            item["sslm_patch"] = sslm_patch
+
+        return item
 
     def metadata_at(self, idx):
         sample = self.metadata_df.loc[idx]
