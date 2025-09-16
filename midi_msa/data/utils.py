@@ -1,4 +1,5 @@
 
+from enum import Enum
 import json
 import os
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from typing import Dict, List, Optional, Union
 
 import mido
 import numpy as np
+from scipy.ndimage import maximum_filter1d
 import scipy.fftpack
 import torch
 import torch.nn.functional as F
@@ -25,6 +27,7 @@ def parse_midi(file_path: Union[Path, str]):
     Parse a MIDI file into a list of bar segments per track.
     A bar segment is defined as a list of MIDI messages encoded as tuples that fit into a single bar.
     A tuple is defined as (time, note, velocity, duration, channel, program)
+    Also extracts time signature information from the MIDI file.
     """
     midi = mido.MidiFile(file_path, clip=True)
 
@@ -45,13 +48,20 @@ def parse_midi(file_path: Union[Path, str]):
         i: 0
         for i in range(16)
     }
+    
+    # Store time signatures with their tick positions
+    # Default to 4/4 if no time signature is found
+    time_signatures = [(0, 4, 4)]  # (tick_position, numerator, denominator)
 
     for idx, track in enumerate(midi.tracks):
         track_name = track.name if track.name else f"track_{idx}"
         current_ticks = 0
         for msg in track:
             current_ticks += msg.time
-            if msg.type == "control_change":
+            if msg.type == "time_signature":
+                # Store time signature change with current tick position
+                time_signatures.append((current_ticks, msg.numerator, msg.denominator))
+            elif msg.type == "control_change":
                 if msg.control == 7:
                     channel_volumes[msg.channel] = msg.value
                 elif msg.control == 11:
@@ -78,7 +88,7 @@ def parse_midi(file_path: Union[Path, str]):
                         note["duration"] = current_ticks - note["time"]
                         break
 
-    return track_data, midi.ticks_per_beat
+    return track_data, midi.ticks_per_beat, time_signatures
 
 
 def parse_markers(markers_qn_path: Union[Path, str], file_id: str, ticks_per_beat: int) -> List[int]:
@@ -254,7 +264,7 @@ def create_lakh_dataset(
 
             # MIDI
             try:
-                track_data, ticks_per_beat = parse_midi(midi_path)
+                track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
                 markers_ticks = parse_markers(
                     markers_qn_path=markers_qn_path,
                     file_id=test_example,
@@ -308,6 +318,7 @@ def create_lakh_dataset(
             }, save_path)
 
 
+_sslms = dict()
 def get_piano_roll_patches(
     data_dir: Union[Path, str],
     window_half_ticks: int = 256,
@@ -405,8 +416,11 @@ def get_piano_roll_patches(
 
         # TODO: SSLMs should be precomputed and saved like the piano rolls
         if return_sslms:
-            sslm = compute_sslm(piano_roll, L=112)  # TODO: L hardcoded for now
-            sslms.append(sslm)
+            if piano_roll_idx in _sslms:
+                sslm = _sslms[piano_roll_idx]
+            else:
+                sslm = compute_sslm(piano_roll, L=112)  # TODO: L hardcoded for now
+                _sslms[piano_roll_idx] = sslm
 
         for i in measure_boundaries:
             if not pad_boundary_patches and (i - padding <= 0 or i + padding >= piano_roll.shape[-1]):
@@ -521,3 +535,44 @@ def compute_sslm(piano_roll: torch.Tensor, L: int = 112) -> torch.Tensor:
     R = R_t.T   # [max_lag, T]
     
     return R
+
+
+def create_target_activation(
+    times: List[float],
+    fps: int,
+    length: int
+) -> torch.Tensor:
+    activation = torch.zeros(length)
+    active_frames = torch.unique(torch.tensor([int(round(timestamp * fps)) for timestamp in times]))
+    active_frames = active_frames[(active_frames >= 0) & (active_frames < length)]
+    activation[active_frames] = 1.
+
+    return activation
+
+def widen_temporal_events(events, num_neighbors=2):
+  """Widen temporal events by a given number of neighbors."""
+  widen_events = events
+  for i in range(num_neighbors):
+    widen_events = maximum_filter1d(widen_events, size=3)
+    neighbor_indices = np.flatnonzero((events != 1) & (widen_events > 0))
+    widen_events[neighbor_indices] *= 0.5
+  
+  return widen_events
+
+class SegmentFunction(str, Enum):
+    # TODO
+    pass
+
+# Mapping from raw labels to consolidated enum categories
+LABEL_MAP = {
+    # TODO
+}
+
+def consolidate_segment_labels(segment_labels: List[str]) -> List[SegmentFunction]:
+    def convert(label: str) -> SegmentFunction:
+        key = label.lower()
+        if key == "unknown":
+            print("consolidate_segment_labels: warning: converting 'unknown' label to SILENCE")
+        return LABEL_MAP.get(key, SegmentFunction.OTHER)
+
+    return [convert(label) for label in segment_labels]
