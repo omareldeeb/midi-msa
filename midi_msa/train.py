@@ -33,8 +33,10 @@ def parse_args():
                         help="Can be used to define additional targets within 2**i bars of center where i < num_targets")
     parser.add_argument("--drop-boundary-patches", action="store_true",
                         help="Pad boundary patches to full window size")
-    parser.add_argument("--use-sslm", action="store_true",
-                        help="Use SSLM (Self-Supervised Learning Model) patches for training")
+    parser.add_argument("--use-sslm-near", action="store_true",
+                        help="Use SSLM with 14s context window (L=112) patches for training")
+    parser.add_argument("--use-sslm-far", action="store_true",
+                        help="Use SSLM with 88s context window (L=704) patches for training")
 
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for training and validation")
@@ -70,7 +72,8 @@ def get_dataloaders(
     pad_boundary_patches: bool,
     batch_size: int,
     patch_normalize: bool,
-    use_sslm: bool = False,
+    use_sslm_near: bool = False,
+    use_sslm_far: bool = False,
     num_targets: int = 1
 ):
     patch_data = get_piano_roll_patches(
@@ -79,12 +82,14 @@ def get_dataloaders(
         positive_oversampling_factor=positive_oversampling_factor,
         negative_undersampling_factor=negative_undersampling_factor,
         pad_boundary_patches=pad_boundary_patches,
-        return_sslms=use_sslm
+        return_sslm_near=use_sslm_near,
+        return_sslm_far=use_sslm_far
     )
     
     piano_rolls = patch_data.piano_rolls
     metadata_dict = patch_data.patch_metadata
-    sslm_patches = patch_data.sslm_patches
+    sslm_near_patches = patch_data.sslm_near_patches
+    sslm_far_patches = patch_data.sslm_far_patches
     metadata_df = pd.DataFrame.from_dict(metadata_dict, orient='index').sample(frac=1)
     
     metadata_df = metadata_df.sample(frac=1)
@@ -99,7 +104,8 @@ def get_dataloaders(
         piano_rolls, metadata_train, 
         normalize=patch_normalize, 
         num_targets=num_targets,
-        sslm_patches=sslm_patches
+        sslm_near_patches=sslm_near_patches,
+        sslm_far_patches=sslm_far_patches
     )
     dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
 
@@ -107,7 +113,8 @@ def get_dataloaders(
         piano_rolls, metadata_val_tubb, 
         normalize=patch_normalize, 
         num_targets=num_targets,
-        sslm_patches=sslm_patches
+        sslm_near_patches=sslm_near_patches,
+        sslm_far_patches=sslm_far_patches
     )
     dataloader_val_tubb = DataLoader(dataset_val_tubb, batch_size=batch_size, shuffle=False)
 
@@ -115,7 +122,8 @@ def get_dataloaders(
         piano_rolls, metadata_val_non_tubb, 
         normalize=patch_normalize, 
         num_targets=num_targets,
-        sslm_patches=sslm_patches
+        sslm_near_patches=sslm_near_patches,
+        sslm_far_patches=sslm_far_patches
     )
     dataloader_val_non_tubb = DataLoader(dataset_val_non_tubb, batch_size=batch_size, shuffle=False)
 
@@ -141,7 +149,8 @@ def main():
         f"mn_overtones_{args.instrument_overtones}_"
         f"normalized_{int(args.patch_normalize)}_"
         f"separate_drums_{int(args.separate_drums)}_"
-        f"use_sslm_{int(args.use_sslm)}_"
+        f"use_sslm_near_{int(args.use_sslm_near)}_"
+        f"use_sslm_far_{int(args.use_sslm_far)}_"
         f"targets_{args.num_targets}.pt"
     )
     checkpoint_path = model_dir / model_name
@@ -149,7 +158,8 @@ def main():
     model = BoundaryClassifier(
         num_targets=args.num_targets, 
         pretrained=args.pretrained, 
-        use_sslm=args.use_sslm
+        use_sslm_near=args.use_sslm_near,
+        use_sslm_far=args.use_sslm_far
     ).to(device)
     if args.resume and checkpoint_path.exists():
         print(f"Loading model from {checkpoint_path}")
@@ -178,7 +188,8 @@ def main():
         pad_boundary_patches=args.drop_boundary_patches,
         batch_size=args.batch_size,
         patch_normalize=args.patch_normalize,
-        use_sslm=args.use_sslm,
+        use_sslm_near=args.use_sslm_near,
+        use_sslm_far=args.use_sslm_far,
         num_targets=args.num_targets
     )
 
@@ -194,7 +205,8 @@ def main():
                 pad_boundary_patches=args.drop_boundary_patches,
                 batch_size=args.batch_size,
                 patch_normalize=args.patch_normalize,
-                use_sslm=args.use_sslm,
+                use_sslm_near=args.use_sslm_near,
+                use_sslm_far=args.use_sslm_far,
                 num_targets=args.num_targets
             )
 
@@ -218,7 +230,9 @@ def main():
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
             optimizer.zero_grad()
-            output = model(batch["piano_roll_patch"], batch.get("sslm_patch"))
+            output = model(batch["piano_roll_patch"], 
+                         batch.get("sslm_near_patch"),
+                         batch.get("sslm_far_patch"))
             loss = criterion(output, batch["targets"].float())
             loss.backward()
             optimizer.step()
@@ -242,7 +256,9 @@ def main():
             for batch_tubb in val_dataloader_tubb:
                 batch_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_tubb.items()}
 
-                output = model(batch_tubb["piano_roll_patch"], batch_tubb.get("sslm_patch"))
+                output = model(batch_tubb["piano_roll_patch"], 
+                             batch_tubb.get("sslm_near_patch"),
+                             batch_tubb.get("sslm_far_patch"))
 
                 val_outputs_tubb.append(output)
                 val_targets_tubb.append(batch_tubb["targets"])
@@ -252,7 +268,9 @@ def main():
             for batch_non_tubb in val_dataloader_non_tubb:
                 batch_non_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_non_tubb.items()}
 
-                output = model(batch_non_tubb["piano_roll_patch"], batch_non_tubb.get("sslm_patch"))
+                output = model(batch_non_tubb["piano_roll_patch"], 
+                             batch_non_tubb.get("sslm_near_patch"),
+                             batch_non_tubb.get("sslm_far_patch"))
 
                 val_outputs_non_tubb.append(output)
                 val_targets_non_tubb.append(batch_non_tubb["targets"])

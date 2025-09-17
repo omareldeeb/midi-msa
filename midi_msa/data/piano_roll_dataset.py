@@ -19,7 +19,8 @@ class PianoRollDataset(Dataset):
         transpose_augmentation=True,
         target_ticks_per_beat=4,
         num_targets=1,  # Additional targets within 2**i bars of center where i < NUM_TARGETS
-        sslm_patches=None,
+        sslm_near_patches=None,
+        sslm_far_patches=None,
     ):
         self.piano_roll_patches = piano_roll_patches
         self.metadata_df = metadata_df
@@ -27,7 +28,8 @@ class PianoRollDataset(Dataset):
         self.transpose_augmentation = transpose_augmentation
         self.target_ticks_per_beat = target_ticks_per_beat
         self.num_targets = num_targets
-        self.sslm_patches = sslm_patches
+        self.sslm_near_patches = sslm_near_patches
+        self.sslm_far_patches = sslm_far_patches
 
     def __len__(self):
         return len(self.metadata_df)
@@ -59,12 +61,19 @@ class PianoRollDataset(Dataset):
             "targets": targets,
         }
 
-        if self.sslm_patches is not None:
-            sslm = self.sslm_patches[sample["sslm_patch_idx"]]
-            if len(sslm.shape) == 2:
-                sslm = sslm.unsqueeze(0)  # Add channel dimension if missing
-            sslm_patch = sslm[..., from_tick:to_tick]
-            item["sslm_patch"] = sslm_patch
+        if self.sslm_near_patches is not None:
+            sslm_near = self.sslm_near_patches[sample["sslm_near_patch_idx"]]
+            if len(sslm_near.shape) == 2:
+                sslm_near = sslm_near.unsqueeze(0)  # Add channel dimension if missing
+            sslm_near_patch = sslm_near[..., from_tick:to_tick]
+            item["sslm_near_patch"] = sslm_near_patch
+        
+        if self.sslm_far_patches is not None:
+            sslm_far = self.sslm_far_patches[sample["sslm_far_patch_idx"]]
+            if len(sslm_far.shape) == 2:
+                sslm_far = sslm_far.unsqueeze(0)  # Add channel dimension if missing
+            sslm_far_patch = sslm_far[..., from_tick:to_tick]
+            item["sslm_far_patch"] = sslm_far_patch
 
         return item
 

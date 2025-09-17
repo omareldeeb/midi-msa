@@ -19,7 +19,8 @@ from tqdm import tqdm
 class PatchData:
     piano_rolls: List[torch.Tensor]
     patch_metadata: Dict
-    sslm_patches: Optional[List[torch.Tensor]] = None
+    sslm_near_patches: Optional[List[torch.Tensor]] = None
+    sslm_far_patches: Optional[List[torch.Tensor]] = None
 
 
 def parse_midi(file_path: Union[Path, str]):
@@ -218,7 +219,8 @@ def create_lakh_dataset(
     target_ticks_per_beat: int = 4,
     instrument_overtones: bool = True,
     separate_drums: bool = True,
-    compute_sslms: bool = False
+    compute_sslm_near: bool = False,
+    compute_sslm_far: bool = False
 ):
     """
     Loads MIDI files from the Lakh MIDI dataset, processes them into piano rolls,
@@ -318,21 +320,27 @@ def create_lakh_dataset(
                 "measure_ticks": measure_ticks
             }
 
-            if compute_sslms:
-                sslm = compute_sslm(piano_roll, L=112)
-                data["sslm"] = sslm
+            if compute_sslm_near:
+                sslm_near = compute_sslm(piano_roll, L=112)  # 14s @ 120 BPM <=> L=112
+                data["sslm_near"] = sslm_near
+            
+            if compute_sslm_far:
+                sslm_far = compute_sslm(piano_roll, L=704)  # 88s @ 120 BPM <=> L=704
+                data["sslm_far"] = sslm_far
 
             torch.save(data, save_path)
 
 
-_sslms = dict()
+_sslms_near = dict()
+_sslms_far = dict()
 def get_piano_roll_patches(
     data_dir: Union[Path, str],
     window_half_ticks: int = 256,
     positive_oversampling_factor: int = 2,
     negative_undersampling_factor: int = 1,
     pad_boundary_patches: bool = True,
-    return_sslms: bool = False
+    return_sslm_near: bool = False,
+    return_sslm_far: bool = False
 ) -> PatchData:
     """
     Load piano rolls from the specified paths, process them, and return a PatchData object
@@ -354,7 +362,8 @@ def get_piano_roll_patches(
     padding = window_half_ticks
 
     piano_rolls = []
-    sslms = []
+    sslms_near = []
+    sslms_far = []
     patch_data = {}
     sample_idx = 0
     piano_roll_idx = 0
@@ -422,12 +431,31 @@ def get_piano_roll_patches(
         piano_rolls.append(piano_roll)
 
         # TODO: SSLMs should be precomputed and saved like the piano rolls
-        if return_sslms:
-            if piano_roll_idx in _sslms:
-                sslm = _sslms[piano_roll_idx]
+        if return_sslm_near:
+            # Check if precomputed, otherwise load from file or compute
+            data = torch.load(piano_roll_path)
+            if "sslm_near" in data:
+                sslm_near = data["sslm_near"]
+            elif "sslm" in data:  # Backwards compatibility with old format
+                sslm_near = data["sslm"]
+            elif piano_roll_idx in _sslms_near:
+                sslm_near = _sslms_near[piano_roll_idx]
             else:
-                sslm = compute_sslm(piano_roll, L=112)  # TODO: L hardcoded for now
-                _sslms[piano_roll_idx] = sslm
+                sslm_near = compute_sslm(piano_roll, L=112)  # 14s <=> L=112
+                _sslms_near[piano_roll_idx] = sslm_near
+            sslms_near.append(sslm_near)
+        
+        if return_sslm_far:
+            # Check if precomputed, otherwise load from file or compute
+            data = torch.load(piano_roll_path)
+            if "sslm_far" in data:
+                sslm_far = data["sslm_far"]
+            elif piano_roll_idx in _sslms_far:
+                sslm_far = _sslms_far[piano_roll_idx]
+            else:
+                sslm_far = compute_sslm(piano_roll, L=704)  # 88s <=> L=704
+                _sslms_far[piano_roll_idx] = sslm_far
+            sslms_far.append(sslm_far)
 
         for i in measure_boundaries:
             if not pad_boundary_patches and (i - padding <= 0 or i + padding >= piano_roll.shape[-1]):
@@ -454,8 +482,10 @@ def get_piano_roll_patches(
             }
             
             # Add SSLM patch index if we're returning SSLMs
-            if return_sslms:
-                sample["sslm_patch_idx"] = piano_roll_idx
+            if return_sslm_near:
+                sample["sslm_near_patch_idx"] = piano_roll_idx
+            if return_sslm_far:
+                sample["sslm_far_patch_idx"] = piano_roll_idx
 
             for _ in range(repetitions):
                 patch_data[sample_idx] = sample
@@ -466,7 +496,8 @@ def get_piano_roll_patches(
     return PatchData(
         piano_rolls=piano_rolls,
         patch_metadata=patch_data,
-        sslm_patches=sslms if return_sslms else None
+        sslm_near_patches=sslms_near if return_sslm_near else None,
+        sslm_far_patches=sslms_far if return_sslm_far else None
     )
 
 
