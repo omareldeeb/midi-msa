@@ -66,7 +66,6 @@ def compute_loss(
     losses = {}
     weighted_losses = {}
     
-    # Beat detection loss
     if "beat_activation" in targets:
         beat_loss = nn.functional.binary_cross_entropy_with_logits(
             model_output.beat_output,
@@ -75,7 +74,6 @@ def compute_loss(
         losses["beat_loss"] = beat_loss
         weighted_losses["beat_loss"] = beat_loss * loss_weight_beat
     
-    # Downbeat detection loss
     if "downbeat_activation" in targets:
         downbeat_loss = nn.functional.binary_cross_entropy_with_logits(
             model_output.downbeat_output,
@@ -84,7 +82,6 @@ def compute_loss(
         losses["downbeat_loss"] = downbeat_loss
         weighted_losses["downbeat_loss"] = downbeat_loss * loss_weight_downbeat
     
-    # Segment boundary detection loss
     if "segment_activation" in targets:
         segment_loss = nn.functional.binary_cross_entropy_with_logits(
             model_output.segment_output,
@@ -93,14 +90,11 @@ def compute_loss(
         losses["segment_loss"] = segment_loss
         weighted_losses["segment_loss"] = segment_loss * loss_weight_section
     
-    # Segment function classification loss
     if "segment_label_activations" in targets:
-        # Reshape outputs and targets
         _, num_classes, _ = model_output.function_outputs.shape
         function_outputs = model_output.function_outputs.permute(0, 2, 1).reshape(-1, num_classes)
         function_targets = targets["segment_label_activations"].reshape(-1)
         
-        # Compute cross entropy loss, ignoring padded positions (-100)
         function_loss = nn.functional.cross_entropy(
             function_outputs,
             function_targets,
@@ -132,26 +126,20 @@ def train_epoch(
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}")
     
     for batch_idx, batch in enumerate(progress_bar):
-        # Move batch to device
         piano_rolls = batch["piano_roll"].to(device)
         targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
         
-        # Forward pass
         optimizer.zero_grad()
         outputs = model(piano_rolls)
         
-        # Compute losses
         losses = compute_loss(outputs, targets)
         
-        # Backward pass
         losses["total_loss"].backward()
         optimizer.step()
         
-        # Update metrics
         total_loss += losses["total_loss"].item()
         num_batches += 1
         
-        # Update progress bar
         progress_bar.set_postfix({
             "loss": losses["total_loss"].item(),
             **{k: v.item() for k, v in losses.items() if k != "total_loss"}
@@ -181,7 +169,6 @@ def validate(
     total_losses = {}
     num_batches = 0
     
-    # Initialize boundary metrics accumulators
     total_boundary_acc = 0.0
     total_boundary_prec = 0.0
     total_boundary_recall = 0.0
@@ -189,21 +176,18 @@ def validate(
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Validation"):
-            # Move batch to device
             piano_rolls = batch["piano_roll"].to(device)
             targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
             
             outputs = model(piano_rolls)
             losses = compute_loss(outputs, targets)
 
-            # Compute boundary metrics if measure_ticks are available
             measure_ticks = batch.get("measure_ticks", None)
             if measure_ticks is not None and "segment_activation" in targets:
-                # Get predictions and targets for boundary positions
                 boundaries_pred = torch.sigmoid(outputs.segment_output).squeeze()
                 boundaries_target = targets["segment_activation"].squeeze()
                 
-                # Handle batch dimension properly
+                # Batch dim
                 if boundaries_pred.dim() == 2:  # batch_size > 1
                     # Process each sample in the batch
                     batch_acc = []
@@ -240,16 +224,13 @@ def validate(
                 total_losses[k] += v.item()
             num_batches += 1
     
-    # Average losses
     avg_losses = {k: v / num_batches for k, v in total_losses.items()}
     
-    # Add averaged boundary metrics
     if num_boundary_batches > 0:
         avg_losses["boundary_acc"] = total_boundary_acc / num_boundary_batches
         avg_losses["boundary_prec"] = total_boundary_prec / num_boundary_batches
         avg_losses["boundary_recall"] = total_boundary_recall / num_boundary_batches
     
-    # Log to wandb (if wandb is available)
     if log_wandb:
         try:
             import wandb
@@ -262,62 +243,22 @@ def validate(
     return avg_losses
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Train TCN model on MIDI data")
-    parser.add_argument("--midi-dir", type=str, required=True, help="Directory containing MIDI files")
-    parser.add_argument("--annotation-dir", type=str, required=True, help="Directory containing annotation files")
-    parser.add_argument("--piano-roll-dir", type=str, required=True, help="Directory containing piano roll files. Will be created and populated if it doesn't exist.")
-    parser.add_argument("--target-ticks-per-beat", type=int, default=48, help="Target ticks per beat")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
-    parser.add_argument("--split-file", type=str, default=None, help="JSON file defining dataset splits")
-    parser.add_argument("--val-split", type=float, default=0.1, help="Validation set proportion if no split file provided")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
-    parser.add_argument("--num-workers", type=int, default=4, help="Number of data loader workers")
-    parser.add_argument("--log-wandb", action="store_true", help="Log to Weights & Biases")
-    parser.add_argument("--wandb-project", type=str, default="midi-tcn", help="Weights & Biases project name")
-    parser.add_argument("--save-every", type=int, default=10, help="Save checkpoint every N epochs")
-    
-    args = parser.parse_args()
-    
-    # Initialize wandb (if available)
-    if args.log_wandb:
-        try:
-            import wandb
-            wandb.init(project=args.wandb_project, config=args)
-        except ImportError:
-            print("Warning: wandb not installed. Logging disabled.")
-            args.log_wandb = False
-    
-    # Create checkpoint directory
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
+def train_fold(
+    fold_idx: int,
+    train_midi_files: List[str],
+    val_midi_files: List[str],
+    args,
+    label_map: List[str],
+    device: torch.device
+) -> Dict[str, float]:
+    """Train and validate a single fold."""
+    print(f"\n{'='*80}")
+    print(f"Fold {fold_idx + 1}")
+    print(f"{'='*80}")
 
-    if args.split_file:
-        print("got split file")
-        with open(args.split_file, "r") as f:
-            splits = json.load(f)
-            train_midi_files = splits.get("train", [])
-            val_midi_files = splits.get("val", [])
-    else:
-        # Recursively collect all MIDI files in subdirectories
-        all_midi_files = []
-        for root, _, files in os.walk(args.midi_dir):
-            for filename in files:
-                if (filename.endswith('.mid') or filename.endswith('.midi')) and not filename.startswith('.'):
-                    file_id, _ = os.path.splitext(filename)
-                    all_midi_files.append(file_id)
-        total_size = len(all_midi_files)
-        val_size = int(total_size * args.val_split)
-        train_size = total_size - val_size
+    fold_checkpoint_dir = os.path.join(args.checkpoint_dir, f"fold_{fold_idx + 1}")
+    os.makedirs(fold_checkpoint_dir, exist_ok=True)
 
-        train_midi_files = all_midi_files[:train_size]
-        val_midi_files = all_midi_files[train_size:train_size + val_size]
-
-    label_map = list(set(LABEL_MAP.values()))
-
-    # Load dataset
     print("Loading dataset...")
     dataset_args = {
         "midi_dir": args.midi_dir,
@@ -335,16 +276,12 @@ def main():
         midi_files=train_midi_files,
         **dataset_args
     )
-
     val_dataset = TCNMidiDataset(
         midi_files=val_midi_files,
         **dataset_args
     )
-
     print(f"Dataset splits - Train: {len(train_dataset)}, Val: {len(val_dataset)}")
-    print(f"Segment function vocab: {label_map}")
 
-    # Create data loaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -353,7 +290,6 @@ def main():
         # collate_fn=collate_fn,
         pin_memory=True
     )
-    
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
@@ -362,41 +298,36 @@ def main():
         # collate_fn=collate_fn,
         pin_memory=True
     )
-    
-    # Initialize model
+
     input_channels = train_dataset[0]["piano_roll"].shape[0]
-    print(f"Input channels: {input_channels}")
-    device = torch.device(args.device)
     model = TCN(
         input_channels=input_channels,
         segment_function_vocab=label_map,
         tcn_layers=2
     ).to(device)
-    
-    # Initialize optimizer
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    
+
     # Training loop
     best_val_loss = float("inf")
-    
+    best_val_metrics = {}
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
-        
-        # Train
+
         train_loss = train_epoch(
             model, train_loader, optimizer, device, epoch, args.log_wandb
         )
         print(f"Train loss: {train_loss:.4f}")
-        
-        # Validate
+
         val_losses = validate(model, val_loader, device, args.log_wandb)
         val_loss = val_losses["total_loss"]
         print(f"Validation losses: {val_losses}")
-        
+
         # Save checkpoint
         if epoch % args.save_every == 0 or val_loss < best_val_loss:
             checkpoint = {
                 "epoch": epoch,
+                "fold": fold_idx + 1,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "train_loss": train_loss,
@@ -404,22 +335,160 @@ def main():
                 "segment_vocab": label_map,
                 "config": vars(args)
             }
-            
+
             checkpoint_path = os.path.join(
-                args.checkpoint_dir,
+                fold_checkpoint_dir,
                 f"checkpoint_epoch_{epoch}.pt"
             )
             torch.save(checkpoint, checkpoint_path)
-            
+
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_val_metrics = val_losses
                 best_checkpoint_path = os.path.join(
-                    args.checkpoint_dir,
+                    fold_checkpoint_dir,
                     "best_checkpoint.pt"
                 )
                 torch.save(checkpoint, best_checkpoint_path)
                 print(f"Saved best checkpoint with val loss: {val_loss:.4f}")
+
+    print(f"\nFold {fold_idx + 1} completed! Best validation loss: {best_val_loss:.4f}")
+    return best_val_metrics
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Train TCN model on MIDI data")
+    parser.add_argument("--midi-dir", type=str, required=True, help="Directory containing MIDI files")
+    parser.add_argument("--annotation-dir", type=str, required=True, help="Directory containing annotation files")
+    parser.add_argument("--piano-roll-dir", type=str, required=True, help="Directory containing piano roll files. Will be created and populated if it doesn't exist.")
+    parser.add_argument("--target-ticks-per-beat", type=int, default=48, help="Target ticks per beat")
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--split-file", type=str, nargs='+', default=None, help="JSON file(s) defining dataset splits. Multiple files for n-fold cross-validation.")
+    parser.add_argument("--val-split", type=float, default=0.1, help="Validation set proportion if no split file provided")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
+    parser.add_argument("--num-workers", type=int, default=4, help="Number of data loader workers")
+    parser.add_argument("--log-wandb", action="store_true", help="Log to Weights & Biases")
+    parser.add_argument("--wandb-project", type=str, default="midi-tcn", help="Weights & Biases project name")
+    parser.add_argument("--save-every", type=int, default=10, help="Save checkpoint every N epochs")
     
+    args = parser.parse_args()
+    
+    if args.log_wandb:
+        try:
+            import wandb
+            wandb.init(project=args.wandb_project, config=args)
+        except ImportError:
+            print("Warning: wandb not installed. Logging disabled.")
+            args.log_wandb = False
+    
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    # Determine if we're doing cross-validation
+    n_fold_cv = args.split_file and len(args.split_file) > 1
+    if n_fold_cv:
+        print(f"\nPerforming {len(args.split_file)}-fold cross-validation")
+        print(f"Split files: {args.split_file}")
+
+        # Load all folds
+        folds = []
+        for split_file in args.split_file:
+            with open(split_file, "r") as f:
+                splits = json.load(f)
+                folds.append({
+                    "train": splits.get("train", []),
+                    "val": splits.get("val", [])
+                })
+
+        label_map = list(set(LABEL_MAP.values()))
+        print(f"Segment function vocab: {label_map}")
+
+        device = torch.device(args.device)
+
+        # Train each fold and collect results
+        fold_results = []
+        for fold_idx, fold in enumerate(folds):
+            best_metrics = train_fold(
+                fold_idx=fold_idx,
+                train_midi_files=fold["train"],
+                val_midi_files=fold["val"],
+                args=args,
+                label_map=label_map,
+                device=device
+            )
+            fold_results.append(best_metrics)
+
+        # Aggregate results across folds
+        print(f"\n{'='*80}")
+        print("Cross-Validation Results")
+        print(f"{'='*80}")
+
+        # Compute mean and std for each metric
+        all_metrics = {}
+        for metric_name in fold_results[0].keys():
+            values = [fold[metric_name] for fold in fold_results]
+            mean_val = sum(values) / len(values)
+            std_val = (sum((x - mean_val) ** 2 for x in values) / len(values)) ** 0.5
+            all_metrics[metric_name] = {
+                "mean": mean_val,
+                "std": std_val,
+                "values": values
+            }
+
+        # Summary
+        for metric_name, stats in all_metrics.items():
+            print(f"{metric_name}:")
+            print(f"  Mean: {stats['mean']:.4f}")
+            print(f"  Std:  {stats['std']:.4f}")
+            print(f"  Folds: {[f'{v:.4f}' for v in stats['values']]}")
+
+        cv_results_path = os.path.join(args.checkpoint_dir, "cv_results.json")
+        with open(cv_results_path, "w") as f:
+            json.dump({
+                "n_folds": len(folds),
+                "metrics": all_metrics,
+                "fold_results": fold_results
+            }, f, indent=2)
+        print(f"\nCross-validation results saved to: {cv_results_path}")
+
+    else:
+        if args.split_file:
+            print("Using single split file")
+            with open(args.split_file[0], "r") as f:
+                splits = json.load(f)
+                train_midi_files = splits.get("train", [])
+                val_midi_files = splits.get("val", [])
+        else:
+            # Recursively collect all MIDI files in subdirectories
+            all_midi_files = []
+            for _, _, files in os.walk(args.midi_dir):
+                for filename in files:
+                    if (filename.endswith('.mid') or filename.endswith('.midi')) and not filename.startswith('.'):
+                        file_id, _ = os.path.splitext(filename)
+                        all_midi_files.append(file_id)
+            total_size = len(all_midi_files)
+            val_size = int(total_size * args.val_split)
+            train_size = total_size - val_size
+
+            train_midi_files = all_midi_files[:train_size]
+            val_midi_files = all_midi_files[train_size:train_size + val_size]
+
+        label_map = list(set(LABEL_MAP.values()))
+        print(f"Segment function vocab: {label_map}")
+
+        device = torch.device(args.device)
+
+        train_fold(
+            fold_idx=0,
+            train_midi_files=train_midi_files,
+            val_midi_files=val_midi_files,
+            args=args,
+            label_map=label_map,
+            device=device
+        )
+
     print("\nTraining completed!")
     
     if args.log_wandb:
