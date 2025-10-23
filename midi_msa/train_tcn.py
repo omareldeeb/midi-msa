@@ -266,6 +266,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train TCN model on MIDI data")
     parser.add_argument("--midi-dir", type=str, required=True, help="Directory containing MIDI files")
     parser.add_argument("--annotation-dir", type=str, required=True, help="Directory containing annotation files")
+    parser.add_argument("--target-ticks-per-beat", type=int, default=48, help="Target ticks per beat")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
@@ -321,7 +322,7 @@ def main():
         "midi_dir": args.midi_dir,
         "annotation_dir": args.annotation_dir,
         "segment_function_vocab": label_map,
-        "target_ticks_per_beat": 4,
+        "target_ticks_per_beat": args.target_ticks_per_beat,
         "compute_beats": False,
         "compute_downbeats": False,
         "compute_segments": True,
