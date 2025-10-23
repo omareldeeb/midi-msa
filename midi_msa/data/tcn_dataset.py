@@ -27,11 +27,12 @@ class TCNMidiDataset(Dataset):
         compute_segments: bool = True,
         instrument_overtones: bool = True,
         separate_drums: bool = True,
+        piano_roll_dir: Optional[Union[str, Path]] = None,
         **kwargs
     ):
         """
         TCN Dataset for MIDI files with functional segment annotations.
-        
+
         Args:
             midi_dir: Directory containing MIDI files
             annotation_dir: Directory containing annotation files (*_labels_coarse_qn.json)
@@ -43,6 +44,7 @@ class TCNMidiDataset(Dataset):
             compute_segments: Whether to compute segment boundary activations
             instrument_overtones: Whether to include instrument overtones in piano roll
             separate_drums: Whether to separate drum tracks in piano roll
+            piano_roll_dir: Optional directory to cache computed piano rolls
         """
         self.midi_dir = Path(midi_dir)
         self.annotation_dir = Path(annotation_dir)
@@ -52,6 +54,11 @@ class TCNMidiDataset(Dataset):
         self.compute_segments = compute_segments
         self.instrument_overtones = instrument_overtones
         self.separate_drums = separate_drums
+        self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
+
+        # Create cache directory if it doesn't exist
+        if self.piano_roll_dir:
+            self.piano_roll_dir.mkdir(parents=True, exist_ok=True)
         
         # Get all annotation files and extract MIDI file IDs
         if midi_files is None:
@@ -85,7 +92,20 @@ class TCNMidiDataset(Dataset):
         except FileNotFoundError:
             self.measures_qn = {}
             print("Warning: measures_qn.json not found, beat/downbeat computation will be limited")
-    
+
+    def _get_piano_roll_cache_path(self, file_id: str) -> Optional[Path]:
+        """Get the cache path for a piano roll file."""
+        if not self.piano_roll_dir:
+            return None
+
+        # Create a unique filename based on file_id and piano roll parameters
+        cache_filename = (
+            f"{file_id}_tpb{self.target_ticks_per_beat}"
+            f"_ot{int(self.instrument_overtones)}"
+            f"_sd{int(self.separate_drums)}.pt"
+        )
+        return self.piano_roll_dir / cache_filename
+
     def _build_segment_vocab(self) -> List[str]:
         """Build vocabulary of unique segment functions from all annotations."""
         vocab = set()
@@ -110,50 +130,67 @@ class TCNMidiDataset(Dataset):
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         file_id = self.midi_file_ids[idx]
-        
+
         # Paths
         midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
         annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
-        
-        # Parse MIDI file
-        track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
-        
-        # Adjust time signature tick positions for target ticks per beat
-        adjusted_time_signatures = [
-            (int(round(tick_pos * self.target_ticks_per_beat / ticks_per_beat)), numerator, denominator)
-            for tick_pos, numerator, denominator in time_signatures
-        ]
-        
-        # Create piano rolls for each track and merge them
-        piano_rolls = []
-        for track_name, note_data in track_data.items():
-            piano_roll = create_piano_roll(
-                note_data,
-                ticks_per_beat,
-                chroma=False,
-                target_ticks_per_beat=self.target_ticks_per_beat,
-                instrument_overtones=self.instrument_overtones,
-                separate_drums=self.separate_drums
-            )
-            if piano_roll is not None:
-                piano_rolls.append(piano_roll)
-        
-        if len(piano_rolls) == 0:
-            # Return empty sample if no valid piano rolls
-            print(f"Warning: No valid piano rolls for {midi_path}, returning empty sample")
-            return self._get_empty_sample()
-        
-        # Stack and merge piano rolls
-        actual_length = max(pr.shape[-1] for pr in piano_rolls)
-        for i, pr in enumerate(piano_rolls):
-            piano_rolls[i] = torch.nn.functional.pad(
-                torch.tensor(pr), 
-                (0, actual_length - pr.shape[-1])
-            )
-        
-        piano_roll = torch.stack(piano_rolls).sum(dim=0).clamp(0, 127)
-        piano_roll = piano_roll.float() / 127.0  # Normalize to [0, 1]
-        
+
+        # Check for cached piano roll
+        cache_path = self._get_piano_roll_cache_path(file_id)
+        if cache_path and cache_path.exists():
+            # Load cached piano roll
+            cached_data = torch.load(cache_path)
+            piano_roll = cached_data["piano_roll"]
+            time_signatures = cached_data["time_signatures"]
+        else:
+            # Parse MIDI file
+            track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
+
+            # Create piano rolls for each track and merge them
+            piano_rolls = []
+            for track_name, note_data in track_data.items():
+                piano_roll = create_piano_roll(
+                    note_data,
+                    ticks_per_beat,
+                    chroma=False,
+                    target_ticks_per_beat=self.target_ticks_per_beat,
+                    instrument_overtones=self.instrument_overtones,
+                    separate_drums=self.separate_drums
+                )
+                if piano_roll is not None:
+                    piano_rolls.append(piano_roll)
+
+            if len(piano_rolls) == 0:
+                # Return empty sample if no valid piano rolls
+                print(f"Warning: No valid piano rolls for {midi_path}, returning empty sample")
+                return self._get_empty_sample()
+
+            # Stack and merge piano rolls
+            actual_length = max(pr.shape[-1] for pr in piano_rolls)
+            for i, pr in enumerate(piano_rolls):
+                piano_rolls[i] = torch.nn.functional.pad(
+                    torch.tensor(pr),
+                    (0, actual_length - pr.shape[-1])
+                )
+
+            piano_roll = torch.stack(piano_rolls).sum(dim=0).clamp(0, 127)
+            piano_roll = piano_roll.float() / 127.0  # Normalize to [0, 1]
+
+            # Adjust time signature tick positions for target ticks per beat
+            adjusted_time_signatures = [
+                (int(round(tick_pos * self.target_ticks_per_beat / ticks_per_beat)), numerator, denominator)
+                for tick_pos, numerator, denominator in time_signatures
+            ]
+
+            # Save to cache if caching is enabled
+            if cache_path:
+                torch.save({
+                    "piano_roll": piano_roll,
+                    "time_signatures": adjusted_time_signatures
+                }, cache_path)
+
+            time_signatures = adjusted_time_signatures
+
         num_time_frames = piano_roll.shape[-1]
         
         # Create sample dict
@@ -213,8 +250,8 @@ class TCNMidiDataset(Dataset):
                     
                     # Find the applicable time signature for this measure
                     # Use the most recent time signature before or at the start of this measure
-                    applicable_time_sig = adjusted_time_signatures[0]  # Default to first (or default 4/4)
-                    for tick_pos, numerator, denominator in adjusted_time_signatures:
+                    applicable_time_sig = time_signatures[0]  # Default to first (or default 4/4)
+                    for tick_pos, numerator, denominator in time_signatures:
                         if tick_pos <= start_tick:
                             applicable_time_sig = (tick_pos, numerator, denominator)
                         else:
