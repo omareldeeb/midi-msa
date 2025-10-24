@@ -253,6 +253,9 @@ def validate(
                     predicted_boundary_ticks, predicted_label_indices = model.compute_predictions(output=outputs, measure_ticks=measure_ticks)
                     estimated_intervals = np.column_stack((predicted_boundary_ticks[:-1], predicted_boundary_ticks[1:]))
 
+                    if len(estimated_intervals) == 0:
+                        continue
+
                     gt_boundary_ticks = np.where(boundaries_target.cpu().numpy() > 0.5)[0]
                     reference_intervals = np.column_stack((gt_boundary_ticks[:-1], gt_boundary_ticks[1:]))
                     boundary_prec, boundary_recall, boundary_f1 = mir_eval.segment.detection(
@@ -275,18 +278,17 @@ def validate(
                         )
 
                         predicted_labels = [label_map[idx] for idx in predicted_label_indices]
-                        if len(predicted_labels) > 0:
-                            estimated_intervals, predicted_labels = mir_eval.util.adjust_intervals(
-                                estimated_intervals,
-                                predicted_labels,
-                                t_min=0
-                            )
+                        estimated_intervals, predicted_labels = mir_eval.util.adjust_intervals(
+                            estimated_intervals,
+                            predicted_labels,
+                            t_min=0
+                        )
 
                         pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
                             reference_intervals=reference_intervals,
                             reference_labels=reference_labels,
                             estimated_intervals=estimated_intervals,
-                            estimated_labels=predicted_label_indices
+                            estimated_labels=predicted_labels
                         )
                         total_pairwise_prec += pairwise_prec
                         total_pairwise_recall += pairwise_recall
