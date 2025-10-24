@@ -6,6 +6,7 @@ Use arrow keys or buttons to navigate through the dataset.
 """
 
 import argparse
+import json
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 import numpy as np
@@ -13,14 +14,22 @@ import torch
 
 from midi_msa.data.tcn_dataset import TCNMidiDataset
 from midi_msa.data.label_preprocessor import LABEL_MAP
+from midi_msa.models.tcn import TCN
 
 
 class DatasetVisualizer:
-    def __init__(self, dataset, target_ticks_per_beat=4):
+    def __init__(self, dataset, target_ticks_per_beat=4, model=None, device='cpu'):
         self.dataset = dataset
         self.target_ticks_per_beat = target_ticks_per_beat
         self.current_idx = 0
         self.info_text_obj = None  # Store reference to info text for cleanup
+        self.model = model
+        self.device = device
+
+        # Set model to eval mode if provided
+        if self.model is not None:
+            self.model.eval()
+            self.model.to(device)
 
         # Create figure with subplots
         self.fig = plt.figure(figsize=(16, 8))
@@ -186,7 +195,7 @@ class DatasetVisualizer:
                 segment_activation,
                 color='red',
                 linewidth=1.5,
-                label='Segment Boundaries'
+                label='Ground Truth Boundaries'
             )
             self.ax_boundaries.fill_between(
                 range(time_frames),
@@ -198,6 +207,35 @@ class DatasetVisualizer:
             # Mark exact boundary positions
             for pos in boundary_positions:
                 self.ax_boundaries.axvline(x=pos, color='red', alpha=0.5, linestyle='--', linewidth=1)
+
+        # Compute and plot model predictions if model is provided
+        if self.model is not None:
+            with torch.no_grad():
+                # Get piano roll input and move to device
+                piano_roll_input = sample["piano_roll"].unsqueeze(0).to(self.device)  # Add batch dimension
+
+                # Get model predictions
+                output = self.model(piano_roll_input)
+
+                # Get segment boundary predictions and apply sigmoid
+                segment_pred = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
+
+                # Plot predictions
+                self.ax_boundaries.plot(
+                    range(len(segment_pred)),
+                    segment_pred,
+                    color='blue',
+                    linewidth=1.5,
+                    label='Model Predictions',
+                    linestyle='--'
+                )
+
+                # Mark predicted boundaries (threshold at 0.5)
+                pred_boundary_positions = np.where(segment_pred > 0.5)[0]
+                for pos in pred_boundary_positions:
+                    self.ax_boundaries.axvline(x=pos, color='blue', alpha=0.3, linestyle=':', linewidth=1)
+                    # Also mark on piano roll
+                    self.ax_piano.axvline(x=pos, color='cyan', alpha=0.6, linestyle=':', linewidth=2)
 
         self.ax_boundaries.set_ylabel('Activation')
         self.ax_boundaries.set_ylim(-0.1, 1.1)
@@ -254,21 +292,34 @@ def main():
                        help='Directory containing annotation JSON files')
     parser.add_argument('--midi-files', type=str, nargs='+', default=None,
                        help='Specific MIDI file IDs to visualize (optional)')
+    parser.add_argument('--split-file', type=str, default=None,
+                       help='JSON file defining dataset splits. Will load validation files only.')
     parser.add_argument('--target-ticks-per-beat', type=int, default=4,
                        help='Target ticks per beat (default: 4)')
     parser.add_argument('--max-samples', type=int, default=None,
                        help='Limit number of samples to load (for faster startup)')
+    parser.add_argument('--checkpoint', type=str, default=None,
+                       help='Path to model checkpoint for visualization (optional)')
 
     args = parser.parse_args()
+
+    # Determine which MIDI files to load
+    midi_files = args.midi_files
+    if args.split_file:
+        print(f"Loading validation files from split: {args.split_file}")
+        with open(args.split_file, 'r') as f:
+            splits = json.load(f)
+            midi_files = splits.get('val', [])
+            print(f"Found {len(midi_files)} validation files")
 
     # Create dataset with same parameters as training
     print("Loading TCN Dataset...")
     dataset = TCNMidiDataset(
         midi_dir=args.midi_dir,
         annotation_dir=args.annotation_dir,
-        midi_files=args.midi_files,
+        midi_files=midi_files,
         target_ticks_per_beat=args.target_ticks_per_beat,
-        segment_function_vocab=list(LABEL_MAP.values()),
+        segment_function_vocab=list(set(LABEL_MAP.values())),
         compute_beats=False,
         compute_downbeats=False,
         compute_segments=True,
@@ -286,13 +337,47 @@ def main():
     for i, func in enumerate(dataset.segment_function_vocab):
         print(f"  {i}: {func}")
 
+    # Load model if checkpoint is provided
+    model = None
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if args.checkpoint:
+        print(f"\nLoading model from checkpoint: {args.checkpoint}")
+        print(f"Using device: {device}")
+
+        # Ensure we have a segment function vocab
+        if dataset.segment_function_vocab is None:
+            raise ValueError("Dataset must have segment_function_vocab to load model")
+
+        # Create model with same vocab as dataset
+        model = TCN(segment_function_vocab=dataset.segment_function_vocab)
+
+        # Load checkpoint
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+
+        # Extract model state dict from checkpoint
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+            print(f"Loaded from epoch {checkpoint.get('epoch', 'unknown')}, fold {checkpoint.get('fold', 'unknown')}")
+        else:
+            # Fallback: assume checkpoint is the state dict itself
+            model.load_state_dict(checkpoint)
+
+        model.to(device)
+        model.eval()
+
+        print("Model loaded successfully!")
+
     # Create visualizer
     print("\nStarting interactive visualizer...")
     print("Controls:")
     print("  - Use arrow keys (← →) or buttons to navigate")
     print("  - Close window to exit")
+    if model is not None:
+        print("  - Blue dashed line shows model predictions")
+        print("  - Red line shows ground truth boundaries")
 
-    visualizer = DatasetVisualizer(dataset, target_ticks_per_beat=args.target_ticks_per_beat)
+    DatasetVisualizer(dataset, target_ticks_per_beat=args.target_ticks_per_beat,
+                      model=model, device=device)
 
 
 if __name__ == '__main__':
