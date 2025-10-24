@@ -191,6 +191,7 @@ def validate(
     downbeat_loss_weight: float,
     section_loss_weight: float,
     function_loss_weight: float,
+    label_map: List[str],
     dataloader: DataLoader,
     device: torch.device,
     log_wandb: bool = False
@@ -263,11 +264,27 @@ def validate(
                     total_boundary_f1 += boundary_f1
                     num_boundary_batches += 1
 
-                    if "segment_label_activations" in targets:
-                        gt_label_indices = np.argmax(targets["segment_label_activations"].cpu().numpy(), axis=1)
+                    if "segment_label_activations" in targets and len(gt_boundary_ticks) > 1:
+                        gt_label_indices = targets["segment_label_activations"].squeeze(0).cpu().numpy()[gt_boundary_ticks[:-1]]
+                        gt_labels = [label_map[idx] for idx in gt_label_indices]
+
+                        reference_intervals, reference_labels = mir_eval.util.adjust_intervals(
+                            reference_intervals,
+                            gt_labels,
+                            t_min=0
+                        )
+
+                        predicted_labels = [label_map[idx] for idx in predicted_label_indices]
+                        if len(predicted_labels) > 0:
+                            estimated_intervals, predicted_labels = mir_eval.util.adjust_intervals(
+                                estimated_intervals,
+                                predicted_labels,
+                                t_min=0
+                            )
+
                         pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
                             reference_intervals=reference_intervals,
-                            reference_labels=gt_label_indices[gt_boundary_ticks[:-1]],
+                            reference_labels=reference_labels,
                             estimated_intervals=estimated_intervals,
                             estimated_labels=predicted_label_indices
                         )
@@ -413,6 +430,7 @@ def train_fold(
             downbeat_loss_weight=args.downbeat_loss_weight,
             section_loss_weight=args.section_loss_weight,
             function_loss_weight=args.function_loss_weight,
+            label_map=label_map,
             dataloader=val_loader,
             device=device,
             log_wandb=args.log_wandb

@@ -190,7 +190,7 @@ class TCN(nn.Module):
             function_outputs=function_outputs
         )
 
-    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Dict[str, np.ndarray]:
+    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
         measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
         pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
         pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
@@ -208,12 +208,13 @@ class TCN(nn.Module):
                 measure_right = measure_ticks_np[i + 1]
             window_right = (measure_right - measure_tick) // 4
 
-            max_prob = np.max(pred_boundary_probs[
-                measure_tick - window_left : measure_tick + window_right
-            ])
-            if max_prob >= threshold:
-                pred_boundary_ticks.append(measure_tick)
-                pred_indices = pred_function_probs[measure_left:measure_right]
-                pred_labels.append(int(np.round(np.mean(pred_indices, axis=0))))
+            probs = pred_boundary_probs[measure_tick - window_left : measure_tick + window_right]
+            if len(probs) > 0:
+                max_prob = np.max(probs)
+                if max_prob >= threshold:
+                    pred_boundary_ticks.append(measure_tick)
+                    pred_function_probs_window = pred_function_probs[measure_left:measure_right]
+                    pred_function_index = np.sum(pred_function_probs_window, axis=1).argmax()
+                    pred_labels.append(pred_function_index)
 
         return np.array(pred_boundary_ticks), np.array(pred_labels)
