@@ -1,8 +1,11 @@
 import argparse
+import gc
 import json
 import os
 from typing import Dict, List
 
+import mir_eval.segment
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -59,8 +62,8 @@ def compute_loss(
     targets: Dict[str, torch.Tensor],
     loss_weight_beat: float = 1.0,
     loss_weight_downbeat: float = 3.0,
-    loss_weight_section: float = 15.0,
-    loss_weight_function: float = 0.1
+    loss_weight_section: float = 10.0,
+    loss_weight_function: float = 1.0
 ) -> Dict[str, torch.Tensor]:
     """Compute losses for all tasks with configurable weights."""
     losses = {}
@@ -112,39 +115,55 @@ def compute_loss(
 
 def train_epoch(
     model: TCN,
+    beat_loss_weight: float,
+    downbeat_loss_weight: float,
+    section_loss_weight: float,
+    function_loss_weight: float,
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
+    clip_norm: float = 1.0,
     log_wandb: bool = False
 ) -> float:
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
     num_batches = 0
-    
+
     progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}")
-    
+
     for batch_idx, batch in enumerate(progress_bar):
         piano_rolls = batch["piano_roll"].to(device)
         targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
-        
+
         optimizer.zero_grad()
         outputs = model(piano_rolls)
-        
-        losses = compute_loss(outputs, targets)
-        
+
+        losses = compute_loss(outputs, targets,
+                              loss_weight_beat=beat_loss_weight,
+                              loss_weight_downbeat=downbeat_loss_weight,
+                              loss_weight_section=section_loss_weight,
+                              loss_weight_function=function_loss_weight)
+
         losses["total_loss"].backward()
+
+        # Gradient clipping
+        if clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+
         optimizer.step()
-        
-        total_loss += losses["total_loss"].item()
+
+        # Extract loss value immediately and delete tensors to free memory
+        loss_value = losses["total_loss"].item()
+        total_loss += loss_value
         num_batches += 1
-        
+
         progress_bar.set_postfix({
-            "loss": losses["total_loss"].item(),
+            "loss": loss_value,
             **{k: v.item() for k, v in losses.items() if k != "total_loss"}
         })
-        
+
         # Log to wandb (if wandb is available)
         if log_wandb and batch_idx % 10 == 0:
             try:
@@ -154,12 +173,24 @@ def train_epoch(
                 })
             except ImportError:
                 pass
-    
+
+        # Clear memory every batch to prevent accumulation
+        del piano_rolls, targets, outputs, losses
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+
     return total_loss / num_batches
 
 
 def validate(
     model: TCN,
+    ticks_per_beat: int,
+    beat_loss_weight: float,
+    downbeat_loss_weight: float,
+    section_loss_weight: float,
+    function_loss_weight: float,
     dataloader: DataLoader,
     device: torch.device,
     log_wandb: bool = False
@@ -168,17 +199,22 @@ def validate(
     model.eval()
     total_losses = {}
     num_batches = 0
-    
-    total_boundary_acc = 0.0
+
     total_boundary_prec = 0.0
     total_boundary_recall = 0.0
+    total_boundary_f1 = 0.0
+
+    total_pairwise_prec = 0.0
+    total_pairwise_recall = 0.0
+    total_pairwise_f1 = 0.0
+
     num_boundary_batches = 0
-    
+
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Validation"):
             piano_rolls = batch["piano_roll"].to(device)
             targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
-            
+
             outputs = model(piano_rolls)
             losses = compute_loss(outputs, targets)
 
@@ -186,7 +222,7 @@ def validate(
             if measure_ticks is not None and "segment_activation" in targets:
                 boundaries_pred = torch.sigmoid(outputs.segment_output).squeeze()
                 boundaries_target = targets["segment_activation"].squeeze()
-                
+
                 # Batch dim
                 if boundaries_pred.dim() == 2:  # batch_size > 1
                     # Process each sample in the batch
@@ -201,36 +237,70 @@ def validate(
                         batch_acc.append(acc)
                         batch_prec.append(prec)
                         batch_recall.append(recall)
-                    
+
                     if batch_acc:  # If we have valid metrics
                         total_boundary_acc += sum(batch_acc) / len(batch_acc)
                         total_boundary_prec += sum(batch_prec) / len(batch_prec)
                         total_boundary_recall += sum(batch_recall) / len(batch_recall)
                         num_boundary_batches += 1
                 else:  # Single sample
-                    boundary_acc, boundary_prec, boundary_recall = acc_prec_recall(
-                        boundaries_pred.cpu()[measure_ticks],
-                        boundaries_target.cpu()[measure_ticks]
+                    # import matplotlib.pyplot as plt
+                    # plt.plot(boundaries_pred.squeeze().cpu().numpy(), label='Predicted Boundaries')
+                    # plt.plot(boundaries_target.squeeze().cpu().numpy(), label='Target Boundaries')
+                    # plt.legend()
+                    # plt.show()
+                    predicted_boundary_ticks, predicted_label_indices = model.compute_predictions(output=outputs, measure_ticks=measure_ticks)
+                    estimated_intervals = np.column_stack((predicted_boundary_ticks[:-1], predicted_boundary_ticks[1:]))
+
+                    gt_boundary_ticks = np.where(boundaries_target.cpu().numpy() > 0.5)[0]
+                    reference_intervals = np.column_stack((gt_boundary_ticks[:-1], gt_boundary_ticks[1:]))
+                    boundary_prec, boundary_recall, boundary_f1 = mir_eval.segment.detection(
+                        reference_intervals=reference_intervals,
+                        estimated_intervals=estimated_intervals
                     )
-                    total_boundary_acc += boundary_acc
                     total_boundary_prec += boundary_prec
                     total_boundary_recall += boundary_recall
+                    total_boundary_f1 += boundary_f1
                     num_boundary_batches += 1
-            
-            # Accumulate losses
+
+                    if "segment_label_activations" in targets:
+                        gt_label_indices = np.argmax(targets["segment_label_activations"].cpu().numpy(), axis=1)
+                        pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
+                            reference_intervals=reference_intervals,
+                            reference_labels=gt_label_indices[gt_boundary_ticks[:-1]],
+                            estimated_intervals=estimated_intervals,
+                            estimated_labels=predicted_label_indices
+                        )
+                        total_pairwise_prec += pairwise_prec
+                        total_pairwise_recall += pairwise_recall
+                        total_pairwise_f1 += pairwise_f1
+
+
+            # Accumulate losses (extract values immediately)
             for k, v in losses.items():
                 if k not in total_losses:
                     total_losses[k] = 0.0
                 total_losses[k] += v.item()
             num_batches += 1
-    
+
+            # Clear memory every batch
+            del piano_rolls, targets, outputs, losses
+            if device.type == "mps":
+                torch.mps.empty_cache()
+            elif device.type == "cuda":
+                torch.cuda.empty_cache()
+
     avg_losses = {k: v / num_batches for k, v in total_losses.items()}
-    
+
     if num_boundary_batches > 0:
-        avg_losses["boundary_acc"] = total_boundary_acc / num_boundary_batches
-        avg_losses["boundary_prec"] = total_boundary_prec / num_boundary_batches
+        avg_losses["boundary_precision"] = total_boundary_prec / num_boundary_batches
         avg_losses["boundary_recall"] = total_boundary_recall / num_boundary_batches
-    
+        avg_losses["boundary_f1"] = total_boundary_f1 / num_boundary_batches
+
+        avg_losses["pairwise_precision"] = total_pairwise_prec / num_boundary_batches
+        avg_losses["pairwise_recall"] = total_pairwise_recall / num_boundary_batches
+        avg_losses["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
+
     if log_wandb:
         try:
             import wandb
@@ -239,7 +309,7 @@ def validate(
             })
         except ImportError:
             pass
-    
+
     return avg_losses
 
 
@@ -306,7 +376,7 @@ def train_fold(
         tcn_layers=2
     ).to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 
     # Training loop
     best_val_loss = float("inf")
@@ -315,13 +385,47 @@ def train_fold(
         print(f"\nEpoch {epoch}/{args.epochs}")
 
         train_loss = train_epoch(
-            model, train_loader, optimizer, device, epoch, args.log_wandb
+            model=model,
+            beat_loss_weight=args.beat_loss_weight,
+            downbeat_loss_weight=args.downbeat_loss_weight,
+            section_loss_weight=args.section_loss_weight,
+            function_loss_weight=args.function_loss_weight,
+            dataloader=train_loader,
+            optimizer=optimizer,
+            device=device,
+            epoch=epoch,
+            clip_norm=args.clip_norm,
+            log_wandb=args.log_wandb
         )
         print(f"Train loss: {train_loss:.4f}")
 
-        val_losses = validate(model, val_loader, device, args.log_wandb)
+        # Clear memory and run garbage collection between train and validation
+        gc.collect()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        val_losses = validate(
+            model=model,
+            ticks_per_beat=args.target_ticks_per_beat,
+            beat_loss_weight=args.beat_loss_weight,
+            downbeat_loss_weight=args.downbeat_loss_weight,
+            section_loss_weight=args.section_loss_weight,
+            function_loss_weight=args.function_loss_weight,
+            dataloader=val_loader,
+            device=device,
+            log_wandb=args.log_wandb
+        )
         val_loss = val_losses["total_loss"]
         print(f"Validation losses: {val_losses}")
+
+        # Clear memory after validation
+        gc.collect()
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
 
         # Save checkpoint
         if epoch % args.save_every == 0 or val_loss < best_val_loss:
@@ -364,7 +468,14 @@ def main():
     parser.add_argument("--target-ticks-per-beat", type=int, default=48, help="Target ticks per beat")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=2e-3, help="Learning rate")
+    parser.add_argument("--clip-norm", type=float, default=1.0, help="Gradient clipping norm (set to 0 to disable)")
+    # Loss weights
+    parser.add_argument("--beat-loss-weight", type=float, default=1.0, help="Weight for beat loss")
+    parser.add_argument("--downbeat-loss-weight", type=float, default=3.0, help="Weight for downbeat loss")
+    parser.add_argument("--section-loss-weight", type=float, default=10.0, help="Weight for section boundary loss")
+    parser.add_argument("--function-loss-weight", type=float, default=1.0, help="Weight for segment function loss")
+
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--split-file", type=str, nargs='+', default=None, help="JSON file(s) defining dataset splits. Multiple files for n-fold cross-validation.")
     parser.add_argument("--val-split", type=float, default=0.1, help="Validation set proportion if no split file provided")
@@ -419,6 +530,13 @@ def main():
                 device=device
             )
             fold_results.append(best_metrics)
+
+            # Clear memory between folds
+            gc.collect()
+            if device.type == "mps":
+                torch.mps.empty_cache()
+            elif device.type == "cuda":
+                torch.cuda.empty_cache()
 
         # Aggregate results across folds
         print(f"\n{'='*80}")

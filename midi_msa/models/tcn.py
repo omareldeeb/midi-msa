@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -83,7 +84,7 @@ class TCN(nn.Module):
     CONV_DROPOUT_RATE: float = 0.15
     CONV_POOL_SIZE: Tuple[int, int] = (5, 1)
     FREQUENCY_CONV_KERNEL_SIZE: Tuple[int, int] = (10, 1)
-    TCN_LAYERS: int = 5
+    TCN_LAYERS: int = 2
     TCN_KERNEL_SIZE: int = 5
 
     def __init__(
@@ -171,14 +172,14 @@ class TCN(nn.Module):
 
     def forward(self, x: torch.Tensor) -> TCNOutput:
         N, C, F, T = x.shape
-        x = self.frontend(x)
+        x = self.frontend(x)    # (1, 20, 1, T)
 
         for layer in self.tcn_layers:
             x, _ = layer(x)
 
         x = x.squeeze(-2).permute(0, 2, 1)  # (N, C, 1, T) -> (N, T, C)
-        beat_output = None# self.beat_output(x).permute(0, 2, 1).squeeze(-2)
-        downbeat_output = None# self.downbeat_output(x).permute(0, 2, 1).squeeze(-2)
+        beat_output = self.beat_output(x).permute(0, 2, 1).squeeze(-2)
+        downbeat_output = self.downbeat_output(x).permute(0, 2, 1).squeeze(-2)
         segment_output = self.segment_boundary_output(x).permute(0, 2, 1).squeeze(-2)
         function_outputs = self.segment_function_output(x).permute(0, 2, 1)
 
@@ -188,3 +189,33 @@ class TCN(nn.Module):
             segment_output=segment_output,
             function_outputs=function_outputs
         )
+
+    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Dict[str, np.ndarray]:
+        measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
+        pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
+        pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
+
+        pred_boundary_ticks = []
+        pred_labels = []
+        for i, measure_tick in enumerate(measure_ticks_np):
+            measure_left = 0
+            if i - 1 >= 0:
+                measure_left = measure_ticks_np[i - 1]
+            window_left = (measure_tick - measure_left) // 4
+
+            measure_right = pred_boundary_probs.shape[-1]
+            if i + 1 < len(measure_ticks_np):
+                measure_right = measure_ticks_np[i + 1]
+            window_right = (measure_right - measure_tick) // 4
+
+            max_prob = np.max(pred_boundary_probs[
+                measure_tick - window_left : measure_tick + window_right
+            ])
+            if max_prob >= threshold:
+                pred_boundary_ticks.append(measure_tick)
+                max_index = np.argmax(pred_boundary_probs[
+                    measure_tick - window_left : measure_tick + window_right
+                ]) + (measure_tick - window_left)
+                pred_labels.append(np.argmax(pred_function_probs[max_index]))
+
+        return np.array(pred_boundary_ticks), np.array(pred_labels)
