@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from midi_msa.data.piano_roll_dataset import PianoRollDataset
-from midi_msa.data.utils import get_piano_roll_patches, PatchData
+from midi_msa.data.utils import get_piano_roll_patches
 from midi_msa.models.mobilenet_boundary_classifier import MobileNetBoundaryClassifier as BoundaryClassifier
 from midi_msa.evaluation.metrics import compute_metrics
 
@@ -37,6 +37,8 @@ def parse_args():
                         help="Use SSLM with 14s context window (L=112) patches for training")
     parser.add_argument("--use-sslm-far", action="store_true",
                         help="Use SSLM with 88s context window (L=704) patches for training")
+    parser.add_argument("--output-features", type=int, default=64,
+                        help="Number of output features from Mobilenet before final classification layer")
 
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for training and validation")
