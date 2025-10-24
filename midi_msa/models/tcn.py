@@ -213,9 +213,7 @@ class TCN(nn.Module):
             ])
             if max_prob >= threshold:
                 pred_boundary_ticks.append(measure_tick)
-                max_index = np.argmax(pred_boundary_probs[
-                    measure_tick - window_left : measure_tick + window_right
-                ]) + (measure_tick - window_left)
-                pred_labels.append(np.argmax(pred_function_probs[max_index]))
+                pred_indices = pred_function_probs[measure_left:measure_right]
+                pred_labels.append(int(round(np.mean(pred_indices, axis=0))))
 
         return np.array(pred_boundary_ticks), np.array(pred_labels)
