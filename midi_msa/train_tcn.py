@@ -287,16 +287,21 @@ def validate(
                         if len(reference_intervals) != len(reference_labels) or len(estimated_intervals) != len(predicted_labels):
                             print(f"Warning: Mismatch in intervals and labels lengths. {len(reference_intervals)} != {len(reference_labels)} or {len(estimated_intervals)} != {len(predicted_labels)}")
                             continue
-
-                        pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
-                            reference_intervals=reference_intervals,
-                            reference_labels=reference_labels,
-                            estimated_intervals=estimated_intervals,
-                            estimated_labels=predicted_labels
-                        )
-                        total_pairwise_prec += pairwise_prec
-                        total_pairwise_recall += pairwise_recall
-                        total_pairwise_f1 += pairwise_f1
+                        
+                        # TODO: This keeps crashing in validate_structure. Check inputs.
+                        try:
+                            pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
+                                reference_intervals=reference_intervals,
+                                reference_labels=reference_labels,
+                                estimated_intervals=estimated_intervals,
+                                estimated_labels=predicted_labels
+                            )
+                            total_pairwise_prec += pairwise_prec
+                            total_pairwise_recall += pairwise_recall
+                            total_pairwise_f1 += pairwise_f1
+                        except ValueError as e:
+                            print(f"Warning: Error computing pairwise metrics: {e}")
+                            continue
 
 
             # Accumulate losses (extract values immediately)
