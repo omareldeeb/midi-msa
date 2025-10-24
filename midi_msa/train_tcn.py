@@ -284,6 +284,10 @@ def validate(
                             t_min=0
                         )
 
+                        if len(reference_intervals) != len(reference_labels) or len(estimated_intervals) != len(predicted_labels):
+                            print(f"Warning: Mismatch in intervals and labels lengths. {len(reference_intervals)} != {len(reference_labels)} or {len(estimated_intervals)} != {len(predicted_labels)}")
+                            continue
+
                         pairwise_prec, pairwise_recall, pairwise_f1 = mir_eval.segment.pairwise(
                             reference_intervals=reference_intervals,
                             reference_labels=reference_labels,
