@@ -14,6 +14,11 @@ from .utils import parse_midi, create_piano_roll, parse_markers, create_target_a
 from .label_preprocessor import preprocess_labels
 
 
+def transpose_augmentation(piano_roll, transpose_range=6):
+    transpose_amount = torch.randint(-transpose_range, transpose_range, ())
+    return torch.roll(piano_roll, transpose_amount.item(), dims=-2) # type: ignore
+
+
 class TCNMidiDataset(Dataset):
     def __init__(
         self,
@@ -30,6 +35,7 @@ class TCNMidiDataset(Dataset):
         compute_sslms: bool = False,
         piano_roll_dir: Optional[Union[str, Path]] = None,
         sslms_dir: Optional[Union[str, Path]] = None,
+        transpose_augmentation: bool = True,
         **kwargs
     ):
         """
@@ -59,6 +65,7 @@ class TCNMidiDataset(Dataset):
         self.compute_sslms = compute_sslms
         self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
         self.sslms_dir = Path(sslms_dir) if sslms_dir else None
+        self.transpose_augmentation = transpose_augmentation
 
         # Create cache directory if it doesn't exist
         if self.piano_roll_dir:
@@ -259,6 +266,9 @@ class TCNMidiDataset(Dataset):
             # Save to cache if caching is enabled
             if cache_path:
                 torch.save(result, cache_path)
+
+        if self.transpose_augmentation:
+            piano_roll_patch = transpose_augmentation(piano_roll_patch)
 
         num_time_frames = piano_roll.shape[-1]
         
