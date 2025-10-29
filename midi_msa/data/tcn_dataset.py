@@ -268,7 +268,7 @@ class TCNMidiDataset(Dataset):
                 torch.save(result, cache_path)
 
         if self.transpose_augmentation:
-            piano_roll_patch = transpose_augmentation(piano_roll_patch)
+            piano_roll = transpose_augmentation(piano_roll)
 
         num_time_frames = piano_roll.shape[-1]
         
