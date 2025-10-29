@@ -135,10 +135,17 @@ def train_epoch(
 
     for batch_idx, batch in enumerate(progress_bar):
         piano_rolls = batch["piano_roll"].to(device)
+        sslm_near = batch.get("sslm_near", None)
+        sslm_far = batch.get("sslm_far", None)
+        if sslm_near is not None:
+            sslm_near = sslm_near.to(device)
+        if sslm_far is not None:
+            sslm_far = sslm_far.to(device)
+
         targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
 
         optimizer.zero_grad()
-        outputs = model(piano_rolls)
+        outputs = model(piano_rolls, sslm_near=sslm_near, sslm_far=sslm_far)
 
         losses = compute_loss(outputs, targets,
                               loss_weight_beat=beat_loss_weight,
@@ -214,9 +221,16 @@ def validate(
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Validation"):
             piano_rolls = batch["piano_roll"].to(device)
+            sslm_near = batch.get("sslm_near", None)
+            sslm_far = batch.get("sslm_far", None)
+            if sslm_near is not None:
+                sslm_near = sslm_near.to(device)
+            if sslm_far is not None:
+                sslm_far = sslm_far.to(device)
+
             targets = {k: v.to(device) for k, v in batch.items() if k != "piano_roll"}
 
-            outputs = model(piano_rolls)
+            outputs = model(piano_rolls, sslm_near=sslm_near, sslm_far=sslm_far)
             losses = compute_loss(outputs, targets)
 
             measure_ticks = batch.get("measure_ticks", None)

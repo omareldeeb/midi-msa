@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 import numpy as np
 import torch
@@ -75,6 +75,52 @@ class TCNBlock(nn.Module):
         x = self.skip_connection(x)
 
         return res + x, x
+    
+class TCNFrontend(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        conv_kernel_size: Tuple[int, int],
+        conv_dropout_rate: float,
+        conv_pool_size: Tuple[int, int],
+        frequency_conv_kernel_size: Tuple[int, int],
+    ):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=conv_kernel_size,
+                padding="same"
+            ),
+            nn.ELU(),
+            nn.Dropout(conv_dropout_rate),
+            nn.MaxPool2d(conv_pool_size),
+
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=frequency_conv_kernel_size,
+                padding="same"
+            ),
+            nn.ELU(),
+            nn.Dropout(conv_dropout_rate),
+            nn.MaxPool2d(conv_pool_size),
+
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=conv_kernel_size,
+                padding="same"
+            ),
+            nn.ELU(),
+            nn.Dropout(conv_dropout_rate),
+            nn.MaxPool2d(conv_pool_size),
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class TCN(nn.Module):
@@ -102,39 +148,39 @@ class TCN(nn.Module):
     ):
         super(TCN, self).__init__()
 
-        self.frontend = nn.Sequential(
-            nn.Conv2d(
-                in_channels=input_channels,
-                out_channels=conv_filters,
-                kernel_size=conv_kernel_size,
-                padding="same"
-            ),
-            nn.ELU(),
-            nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+        self.frontend = TCNFrontend(
+            in_channels=input_channels,
+            out_channels=conv_filters,
+            conv_kernel_size=conv_kernel_size,
+            conv_dropout_rate=conv_dropout_rate,
+            conv_pool_size=conv_pool_size,
+            frequency_conv_kernel_size=frequency_conv_kernel_size,
+        )
 
-            # "Moving the “frequency only” convolution in between the two 3 × 3 convolutions as shown in Figure 1,
-            # enables the network to better capture harmonic content across a wider frequency range instead of detecting
-            # local changes in smaller regions of the spectrogram only and then later aggregating them."
-            nn.Conv2d(
-                in_channels=conv_filters,
-                out_channels=conv_filters,
-                kernel_size=frequency_conv_kernel_size,
-                padding="same"
-            ),
-            nn.ELU(),
-            nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+        self.sslm_near_frontend = TCNFrontend(
+            in_channels=1,
+            out_channels=conv_filters,
+            conv_kernel_size=conv_kernel_size,
+            conv_dropout_rate=conv_dropout_rate,
+            conv_pool_size=conv_pool_size,
+            frequency_conv_kernel_size=frequency_conv_kernel_size,
+        )
 
-            nn.Conv2d(
-                in_channels=conv_filters,
-                out_channels=conv_filters,
-                kernel_size=conv_kernel_size,
-                padding="same"
-            ),
-            nn.ELU(),
-            nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+        self.sslm_far_frontend = TCNFrontend(
+            in_channels=1,
+            out_channels=conv_filters,
+            conv_kernel_size=conv_kernel_size,
+            conv_dropout_rate=conv_dropout_rate,
+            conv_pool_size=conv_pool_size,
+            frequency_conv_kernel_size=frequency_conv_kernel_size,
+        )
+        
+        frontend_out_channels = conv_filters * 3  # 3 channels: spectrogram + 2 SSLM
+        self.frontend_projection = nn.Conv2d(
+            in_channels=frontend_out_channels,
+            out_channels=conv_filters,
+            kernel_size=(1, 1),
+            padding=0
         )
 
         self.tcn_layers = nn.ModuleList()
@@ -170,9 +216,16 @@ class TCN(nn.Module):
         self.downbeat_output[-1].bias.data.fill_(-torch.log(torch.tensor(1 / 0.0125 - 1)))
         self.segment_boundary_output[-1].bias.data.fill_(-torch.log(torch.tensor(1 / 0.01 - 1)))
 
-    def forward(self, x: torch.Tensor) -> TCNOutput:
+    def forward(self, x: torch.Tensor, sslm_near: Optional[torch.Tensor], sslm_far: Optional[torch.Tensor]) -> TCNOutput:
         N, C, F, T = x.shape
         x = self.frontend(x)    # (1, 20, 1, T)
+
+        if sslm_near is not None:
+            sslm_near = self.sslm_near_frontend(sslm_near)
+            x = torch.cat((x, sslm_near), dim=1)
+        if sslm_far is not None:
+            sslm_far = self.sslm_far_frontend(sslm_far)
+            x = torch.cat((x, sslm_far), dim=1)
 
         for layer in self.tcn_layers:
             x, _ = layer(x)

@@ -10,7 +10,7 @@ from tqdm import tqdm
 import numpy as np
 # import madmom
 
-from .utils import parse_midi, create_piano_roll, parse_markers, create_target_activation, widen_temporal_events
+from .utils import parse_midi, create_piano_roll, parse_markers, create_target_activation, widen_temporal_events, compute_sslm
 from .label_preprocessor import preprocess_labels
 
 
@@ -27,7 +27,9 @@ class TCNMidiDataset(Dataset):
         compute_segments: bool = True,
         instrument_overtones: bool = True,
         separate_drums: bool = True,
+        compute_sslms: bool = False,
         piano_roll_dir: Optional[Union[str, Path]] = None,
+        sslms_dir: Optional[Union[str, Path]] = None,
         **kwargs
     ):
         """
@@ -54,12 +56,17 @@ class TCNMidiDataset(Dataset):
         self.compute_segments = compute_segments
         self.instrument_overtones = instrument_overtones
         self.separate_drums = separate_drums
+        self.compute_sslms = compute_sslms
         self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
+        self.sslms_dir = Path(sslms_dir) if sslms_dir else None
 
         # Create cache directory if it doesn't exist
         if self.piano_roll_dir:
             self.piano_roll_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        if self.sslms_dir:
+            self.sslms_dir.mkdir(parents=True, exist_ok=True)
+
         # Get all annotation files and extract MIDI file IDs
         if midi_files is None:
             annotation_files = glob.glob(str(self.annotation_dir / "*_labels_coarse_qn.json"))
@@ -109,6 +116,14 @@ class TCNMidiDataset(Dataset):
             f"_sd{int(self.separate_drums)}.pt"
         )
         return self.piano_roll_dir / cache_filename
+    
+    def _get_sslm_cache_path(self, file_id: str) -> Optional[Path]:
+        """Get the cache path for an SSLM file."""
+        if not self.sslms_dir:
+            return None
+
+        cache_filename = f"{file_id}_sslm_tp{self.target_ticks_per_beat}.pt"
+        return self.sslms_dir / cache_filename
 
     def _compute_piano_roll(self, file_id: str) -> Optional[Dict[str, torch.Tensor]]:
         """
@@ -249,6 +264,27 @@ class TCNMidiDataset(Dataset):
         
         # Create sample dict
         sample = {"piano_roll": piano_roll}
+
+        if self.compute_sslms:
+            sslm_cache_path = self._get_sslm_cache_path(file_id)
+            if sslm_cache_path and sslm_cache_path.exists():
+                sslm_data = torch.load(sslm_cache_path)
+                sslm_near = sslm_data["sslm_near"]
+                sslm_far = sslm_data["sslm_far"]
+            else:
+                sslm_near = compute_sslm(piano_roll, L=int((14 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
+                sslm_far = compute_sslm(piano_roll, L=int((88 / 0.5) * self.target_ticks_per_beat)) # 88s at 0.5 seconds per beat (120 BPM) at target resolution
+                if sslm_cache_path:
+                    torch.save({"sslm_near": sslm_near, "sslm_far": sslm_far}, sslm_cache_path)
+            
+            # Match dims to piano roll
+            height = piano_roll.shape[-2]
+            sslm_near = sslm_near[:height, :num_time_frames]
+            sslm_far = sslm_far[:height, :num_time_frames]
+
+            sample["sslm_near"] = sslm_near
+            sample["sslm_far"] = sslm_far
+
 
         # Add measure ticks
         measure_ticks = None
