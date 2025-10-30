@@ -289,17 +289,22 @@ def validate(
                         gt_label_indices = targets["segment_label_activations"].squeeze(0).cpu().numpy()[gt_boundary_ticks[:-1]]
                         gt_labels = [label_map[idx] for idx in gt_label_indices]
 
+                        # Determine the maximum end time to ensure both intervals cover the same span
+                        t_max = max(reference_intervals[-1, 1], estimated_intervals[-1, 1])
+
                         reference_intervals, reference_labels = mir_eval.util.adjust_intervals(
                             reference_intervals,
                             gt_labels,
-                            t_min=0
+                            t_min=0,
+                            t_max=t_max
                         )
 
                         predicted_labels = [label_map[idx] for idx in predicted_label_indices]
                         estimated_intervals, predicted_labels = mir_eval.util.adjust_intervals(
                             estimated_intervals,
                             predicted_labels,
-                            t_min=0
+                            t_min=0,
+                            t_max=t_max
                         )
 
                         if len(reference_intervals) != len(reference_labels) or len(estimated_intervals) != len(predicted_labels):
@@ -390,10 +395,12 @@ def train_fold(
     }
     train_dataset = TCNMidiDataset(
         midi_files=train_midi_files,
+        sslms_dir=args.sslm_dir,
         **dataset_args
     )
     val_dataset = TCNMidiDataset(
         midi_files=val_midi_files,
+        sslms_dir=args.sslm_dir,
         **dataset_args
     )
     print(f"Dataset splits - Train: {len(train_dataset)}, Val: {len(val_dataset)}")
@@ -512,6 +519,7 @@ def main():
     parser.add_argument("--midi-dir", type=str, required=True, help="Directory containing MIDI files")
     parser.add_argument("--annotation-dir", type=str, required=True, help="Directory containing annotation files")
     parser.add_argument("--piano-roll-dir", type=str, required=True, help="Directory containing piano roll files. Will be created and populated if it doesn't exist.")
+    parser.add_argument("--sslm-dir", type=str, default=None, help="Directory containing SSLM files (if using SSLM features)")
     parser.add_argument("--target-ticks-per-beat", type=int, default=48, help="Target ticks per beat")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
