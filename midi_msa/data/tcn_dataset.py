@@ -32,7 +32,6 @@ class TCNMidiDataset(Dataset):
         compute_segments: bool = True,
         instrument_overtones: bool = True,
         separate_drums: bool = True,
-        compute_sslms: bool = False,
         piano_roll_dir: Optional[Union[str, Path]] = None,
         sslms_dir: Optional[Union[str, Path]] = None,
         transpose_augmentation: bool = True,
@@ -62,10 +61,10 @@ class TCNMidiDataset(Dataset):
         self.compute_segments = compute_segments
         self.instrument_overtones = instrument_overtones
         self.separate_drums = separate_drums
-        self.compute_sslms = compute_sslms
         self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
         self.sslms_dir = Path(sslms_dir) if sslms_dir else None
         self.transpose_augmentation = transpose_augmentation
+        self.compute_sslms = sslms_dir is not None
 
         # Create cache directory if it doesn't exist
         if self.piano_roll_dir:
@@ -291,6 +290,16 @@ class TCNMidiDataset(Dataset):
             height = piano_roll.shape[-2]
             sslm_near = sslm_near[:height, :num_time_frames]
             sslm_far = sslm_far[:height, :num_time_frames]
+            # add channel dim
+            sslm_near = sslm_near.unsqueeze(0)
+            sslm_far = sslm_far.unsqueeze(0)
+            # pad height if needed
+            if sslm_near.shape[-2] < height:
+                pad_amount = height - sslm_near.shape[-2]
+                sslm_near = torch.nn.functional.pad(sslm_near, (0, 0, 0, pad_amount))
+            if sslm_far.shape[-2] < height:
+                pad_amount = height - sslm_far.shape[-2]
+                sslm_far = torch.nn.functional.pad(sslm_far, (0, 0, 0, pad_amount))
 
             sample["sslm_near"] = sslm_near
             sample["sslm_far"] = sslm_far
