@@ -281,8 +281,10 @@ class TCNMidiDataset(Dataset):
                 sslm_near = sslm_data["sslm_near"]
                 sslm_far = sslm_data["sslm_far"]
             else:
-                sslm_near = compute_sslm(piano_roll, L=int((14 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
-                sslm_far = compute_sslm(piano_roll, L=int((88 / 0.5) * self.target_ticks_per_beat)) # 88s at 0.5 seconds per beat (120 BPM) at target resolution
+                # Merge piano roll across channels for SSLM computation by summing
+                sslm_piano_roll = piano_roll.sum(dim=0, keepdim=True)
+                sslm_near = compute_sslm(sslm_piano_roll, L=int((14 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
+                sslm_far = compute_sslm(sslm_piano_roll, L=int((88 / 0.5) * self.target_ticks_per_beat)) # 88s at 0.5 seconds per beat (120 BPM) at target resolution
                 if sslm_cache_path:
                     torch.save({"sslm_near": sslm_near, "sslm_far": sslm_far}, sslm_cache_path)
             
