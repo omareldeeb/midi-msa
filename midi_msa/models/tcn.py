@@ -228,6 +228,8 @@ class TCN(nn.Module):
             sslm_far = self.sslm_far_frontend(sslm_far)
             x = torch.cat((x, sslm_far), dim=1)
 
+        x = self.frontend_projection(x)
+
         for layer in self.tcn_layers:
             x, _ = layer(x)
 
