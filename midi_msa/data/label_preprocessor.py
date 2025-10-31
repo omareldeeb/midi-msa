@@ -18,7 +18,8 @@ LABEL_MAP = {
     "Transition": "Instrumental",
 
     "Coda": "Outro",
-    "End": "End"
+    "End": "End",
+    "Start": "Start",
 }
 
 

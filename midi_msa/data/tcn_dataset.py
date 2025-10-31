@@ -397,12 +397,16 @@ class TCNMidiDataset(Dataset):
     ) -> torch.Tensor:
         """Create frame-wise segment function labels."""
         segment_label_activations = torch.zeros(num_time_frames, dtype=torch.long)
-        
+
+        if len(segment_ticks) > 0 and segment_ticks[0] != 0:
+            segment_ticks = [0] + segment_ticks
+            segment_labels = ["Start"] + segment_labels
+        if len(segment_ticks) > 0 and segment_ticks[-1] != num_time_frames - 1:
+            segment_ticks = segment_ticks + [num_time_frames - 1]
+            segment_labels = segment_labels + ["End"]
+
         # Process segments
         for i in range(len(segment_labels) - 1):
-            if segment_labels[i] == "End":
-                continue
-                
             start_tick = segment_ticks[i]
             end_tick = segment_ticks[i + 1]
             
