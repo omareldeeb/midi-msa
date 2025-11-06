@@ -31,7 +31,7 @@ def parse_args():
                         help="Train separate drum patches")
     parser.add_argument("--num-targets", type=int, default=1,
                         help="Can be used to define additional targets within 2**i bars of center where i < num_targets")
-    parser.add_argument("--drop-boundary-patches", action="store_true",
+    parser.add_argument("--pad-boundary-patches", action="store_true",
                         help="Pad boundary patches to full window size")
     parser.add_argument("--use-sslm-near", action="store_true",
                         help="Use SSLM with 14s context window (L=112) patches for training")
