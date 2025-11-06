@@ -10,7 +10,7 @@ from tqdm import tqdm
 import numpy as np
 # import madmom
 
-from .utils import parse_midi, create_piano_roll, parse_markers, create_target_activation, widen_temporal_events, compute_sslm
+from .utils import parse_midi, create_piano_roll, parse_markers, create_target_activation, widen_temporal_events, compute_sslms
 from .label_preprocessor import preprocess_labels
 
 
@@ -269,6 +269,20 @@ class TCNMidiDataset(Dataset):
         if self.transpose_augmentation:
             piano_roll = transpose_augmentation(piano_roll)
 
+        # Cut silence from beginning
+        # print(f"Piano roll shape before trimming: {piano_roll.shape}")
+        # # piano_roll shape is (C, F, T); sum over channels and frequencies to get per-frame energy
+        # print(piano_roll[:, :, 0])
+        # non_silent_cols = torch.where(piano_roll.sum(dim=(0, 1)) > 0)[0]
+        # print(non_silent_cols)
+        # if len(non_silent_cols) == 0:
+        #     return self._get_empty_sample()
+        # first_non_silent = non_silent_cols[0].item()
+        # # slice along time axis (last dim)
+        # piano_roll = piano_roll[:, :, first_non_silent:]
+        # print(f"First non-silent frame at {first_non_silent}")
+        # print(f"Piano roll shape after trimming: {piano_roll.shape}")
+
         num_time_frames = piano_roll.shape[-1]
         
         # Create sample dict
@@ -283,8 +297,7 @@ class TCNMidiDataset(Dataset):
             else:
                 # Merge piano roll across channels for SSLM computation by summing
                 sslm_piano_roll = piano_roll.sum(dim=0, keepdim=True)
-                sslm_near = compute_sslm(sslm_piano_roll, L=int((14 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
-                sslm_far = compute_sslm(sslm_piano_roll, L=int((88 / 0.5) * self.target_ticks_per_beat)) # 88s at 0.5 seconds per beat (120 BPM) at target resolution
+                sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
                 if sslm_cache_path:
                     torch.save({"sslm_near": sslm_near, "sslm_far": sslm_far}, sslm_cache_path)
             
