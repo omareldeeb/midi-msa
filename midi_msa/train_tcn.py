@@ -548,6 +548,7 @@ def main():
                 })
 
         label_map = list(set(LABEL_MAP.values()))
+        label_map.sort()
         print(f"Segment function vocab: {label_map}")
 
         device = torch.device(args.device)
@@ -628,6 +629,7 @@ def main():
             val_midi_files = all_midi_files[train_size:train_size + val_size]
 
         label_map = list(set(LABEL_MAP.values()))
+        label_map.sort()
         print(f"Segment function vocab: {label_map}")
 
         device = torch.device(args.device)
