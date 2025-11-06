@@ -36,22 +36,30 @@ class DatasetVisualizer:
         self.fig.suptitle('TCN Dataset Visualizer', fontsize=14, fontweight='bold')
 
         # Create grid spec for better layout (removed segment labels subplot)
-        gs = self.fig.add_gridspec(3, 1, height_ratios=[3, 1, 0.3], hspace=0.3)
+        gs = self.fig.add_gridspec(5, 1, height_ratios=[3, 3, 3, 1, 0.3], hspace=0.3)
 
         # Main piano roll plot
         self.ax_piano = self.fig.add_subplot(gs[0])
         self.ax_piano.set_title('Piano Roll with Segment Labels')
         self.ax_piano.set_ylabel('MIDI Pitch')
 
+        self.ax_sslm_near = self.fig.add_subplot(gs[1])
+        self.ax_sslm_near.set_title('SSLM Near Features')
+        self.ax_sslm_near.set_ylabel('Feature Dimension')
+
+        self.ax_sslm_far = self.fig.add_subplot(gs[2])
+        self.ax_sslm_far.set_title('SSLM Far Features')
+        self.ax_sslm_far.set_ylabel('Feature Dimension')
+
         # Segment boundaries plot
-        self.ax_boundaries = self.fig.add_subplot(gs[1], sharex=self.ax_piano)
+        self.ax_boundaries = self.fig.add_subplot(gs[3], sharex=self.ax_piano)
         self.ax_boundaries.set_title('Segment Boundaries (Activation)')
         self.ax_boundaries.set_ylabel('Activation')
         self.ax_boundaries.set_ylim(-0.1, 1.1)
         self.ax_boundaries.set_xlabel('Time (ticks)')
 
         # Navigation buttons
-        self.ax_buttons = self.fig.add_subplot(gs[2])
+        self.ax_buttons = self.fig.add_subplot(gs[4])
         self.ax_buttons.axis('off')
 
         # Create button axes
@@ -101,6 +109,8 @@ class DatasetVisualizer:
 
         # Extract data
         piano_roll = sample["piano_roll"].numpy()  # Shape: (3, 128, time_frames)
+        sslm_near = sample.get("sslm_near", None)
+        sslm_far = sample.get("sslm_far", None)
         segment_activation = sample.get("segment_activation", None)
         segment_labels = sample.get("segment_label_activations", None)
         measure_ticks = sample.get("measure_ticks", None)
@@ -176,6 +186,37 @@ class DatasetVisualizer:
         self.ax_piano.set_ylabel('MIDI Pitch')
         self.ax_piano.set_title(f'Piano Roll with Segment Labels - Sample {self.current_idx}/{len(self.dataset)-1}: {file_id}')
 
+        # Plot SSLM features if available
+        self.ax_sslm_near.clear()
+        if sslm_near is not None:
+            sslm_near_np = sslm_near[0].numpy().T  # Shape: (time_frames, feature_dim)
+            self.ax_sslm_near.imshow(
+                sslm_near_np.T,
+                aspect='auto',
+                origin='lower',
+                cmap='viridis',
+                interpolation='nearest',
+                extent=[0, sslm_near_np.shape[0], 0, sslm_near_np.shape[1]]
+            )
+            self.ax_sslm_near.set_ylabel('Feature Dimension')
+        else:
+            self.ax_sslm_near.text(0.5, 0.5, 'No SSLM Near Features', ha='center', va='center', transform=self.ax_sslm_near.transAxes)
+        
+        self.ax_sslm_far.clear()
+        if sslm_far is not None:
+            sslm_far_np = sslm_far[0].numpy().T  # Shape: (time_frames, feature_dim)
+            self.ax_sslm_far.imshow(
+                sslm_far_np.T,
+                aspect='auto',
+                origin='lower',
+                cmap='viridis',
+                interpolation='nearest',
+                extent=[0, sslm_far_np.shape[0], 0, sslm_far_np.shape[1]]
+            )
+            self.ax_sslm_far.set_ylabel('Feature Dimension')
+        else:
+            self.ax_sslm_far.text(0.5, 0.5, 'No SSLM Far Features', ha='center', va='center', transform=self.ax_sslm_far.transAxes)
+
         # Add measure lines if available
         if measure_ticks is not None:
             for tick in measure_ticks:
@@ -213,9 +254,15 @@ class DatasetVisualizer:
             with torch.no_grad():
                 # Get piano roll input and move to device
                 piano_roll_input = sample["piano_roll"].unsqueeze(0).to(self.device)  # Add batch dimension
+                sslm_near_input = sample.get("sslm_near", None)
+                sslm_far_input = sample.get("sslm_far", None)
+                if sslm_near_input is not None:
+                    sslm_near_input = sslm_near_input.unsqueeze(0).to(self.device)
+                if sslm_far_input is not None:
+                    sslm_far_input = sslm_far_input.unsqueeze(0).to(self.device)
 
                 # Get model predictions
-                output = self.model(piano_roll_input)
+                output = self.model(piano_roll_input, sslm_near=sslm_near_input, sslm_far=sslm_far_input)
 
                 # Get segment boundary predictions and apply sigmoid
                 segment_pred = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
@@ -288,6 +335,8 @@ def main():
     parser = argparse.ArgumentParser(description='Visualize TCN Dataset')
     parser.add_argument('--midi-dir', type=str, required=True,
                        help='Directory containing MIDI files')
+    parser.add_argument('--sslm-dir', type=str, default=None,
+                       help='Directory containing SSLM files (if using SSLM features)')
     parser.add_argument('--annotation-dir', type=str, required=True,
                        help='Directory containing annotation JSON files')
     parser.add_argument('--midi-files', type=str, nargs='+', default=None,
@@ -316,6 +365,7 @@ def main():
     print("Loading TCN Dataset...")
     dataset = TCNMidiDataset(
         midi_dir=args.midi_dir,
+        sslms_dir=args.sslm_dir,
         annotation_dir=args.annotation_dir,
         midi_files=midi_files,
         target_ticks_per_beat=args.target_ticks_per_beat,
