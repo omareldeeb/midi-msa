@@ -266,6 +266,28 @@ def create_lakh_dataset(
         for test_example in tqdm(files_dict[key], desc="Loading test examples"):
             save_path = data_dir / Path(key) / Path(f"{test_example}.pt")
             if save_path.exists():
+                # See if saved data contains segment labels if annotation_dir is provided else add segment labels
+                if annotation_dir is not None:
+                    data = torch.load(save_path)
+                    if "segment_labels" in data:
+                        continue
+                    else:
+                        annotation_path = Path(annotation_dir) / f"{test_example}_labels_coarse_qn.json"
+                        if annotation_path.exists():
+                            with open(annotation_path, "r") as f:
+                                annotations = json.load(f)
+
+                            # Preprocess labels
+                            processed_annotations = preprocess_labels(annotations)
+
+                            # Convert to ticks
+                            segment_labels = []
+                            for qn, label in processed_annotations:
+                                segment_labels.append(label)
+
+                            # Store labels corresponding to segment boundaries
+                            data["segment_labels"] = segment_labels
+                            torch.save(data, save_path)
                 continue
 
             measure_qns = measure_qns_all[test_example]
