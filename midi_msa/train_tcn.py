@@ -302,7 +302,8 @@ def validate(
                                 reference_intervals=reference_intervals,
                                 reference_labels=reference_labels,
                                 estimated_intervals=estimated_intervals,
-                                estimated_labels=predicted_labels
+                                estimated_labels=predicted_labels,
+                                frame_size=((0.1 / 0.5) * ticks_per_beat)    # 0.1s at 120 BPM
                             )
                             total_pairwise_prec += pairwise_prec
                             total_pairwise_recall += pairwise_recall
