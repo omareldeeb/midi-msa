@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from .label_preprocessor import preprocess_labels, LABEL_MAP
+
 
 @dataclass
 class PatchData:
@@ -222,6 +224,7 @@ def create_lakh_dataset(
     data_dir: Union[Path, str],
     files_dict: Dict[str, List[str]],
     markers_qn_path: Union[Path, str],
+    annotation_dir: Optional[Union[Path, str]] = None,
     target_ticks_per_beat: int = 4,
     instrument_overtones: bool = True,
     separate_drums: bool = True,
@@ -326,12 +329,30 @@ def create_lakh_dataset(
                 "measure_ticks": measure_ticks
             }
 
+            # Load and process segment labels if annotation_dir is provided
+            if annotation_dir is not None:
+                annotation_path = Path(annotation_dir) / f"{test_example}_labels_coarse_qn.json"
+                if annotation_path.exists():
+                    with open(annotation_path, "r") as f:
+                        annotations = json.load(f)
+
+                    # Preprocess labels
+                    processed_annotations = preprocess_labels(annotations)
+
+                    # Convert to ticks
+                    segment_labels = []
+                    for qn, label in processed_annotations:
+                        segment_labels.append(label)
+
+                    # Store labels corresponding to segment boundaries
+                    data["segment_labels"] = segment_labels
+
             if compute_sslm_near:
-                sslm_near, _ = compute_sslms(piano_roll)
+                sslm_near, _ = compute_sslms(piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
                 data["sslm_near"] = sslm_near
-            
+
             if compute_sslm_far:
-                _, sslm_far = compute_sslms(piano_roll)
+                _, sslm_far = compute_sslms(piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
                 data["sslm_far"] = sslm_far
 
             torch.save(data, save_path)
@@ -380,7 +401,7 @@ def get_piano_roll_patches(
         except RuntimeError:
             print(f"Error loading {piano_roll_path}")
             continue
-        
+
         # Don't oversample/undersample in validation/test sets
         positive_oversampling_factor = positive_oversampling_factor if 'train' in str(piano_roll_path) else 1
         negative_undersampling_factor = negative_undersampling_factor if 'train' in str(piano_roll_path) else 1
@@ -388,6 +409,7 @@ def get_piano_roll_patches(
         piano_roll = data["piano_roll"]
         segment_boundaries = data["segment_boundaries"]
         measure_boundaries = data["measure_ticks"]
+        segment_labels = data.get("segment_labels", None)
 
         # Compute first and last nonzero columns of the first channel (first and last onset, respectively)
         if piano_roll.dim() == 4:
@@ -447,7 +469,7 @@ def get_piano_roll_patches(
             elif piano_roll_idx in _sslms_near:
                 sslm_near = _sslms_near[piano_roll_idx]
             else:
-                sslm_near = compute_sslm(piano_roll, L=112)  # 14s <=> L=112
+                sslm_near, _ = compute_sslms(piano_roll, L=704)  # 88s <=> L=704
                 _sslms_near[piano_roll_idx] = sslm_near
             sslms_near.append(sslm_near)
         
@@ -459,7 +481,7 @@ def get_piano_roll_patches(
             elif piano_roll_idx in _sslms_far:
                 sslm_far = _sslms_far[piano_roll_idx]
             else:
-                sslm_far = compute_sslm(piano_roll, L=704)  # 88s <=> L=704
+                _, sslm_far = compute_sslms(piano_roll, L=704)  # 88s <=> L=704
                 _sslms_far[piano_roll_idx] = sslm_far
             sslms_far.append(sslm_far)
 
@@ -486,7 +508,21 @@ def get_piano_roll_patches(
                 # New: nearest segment boundary
                 "nearest_segment_boundary": nearest_segment_boundary
             }
-            
+
+            # Add segment label immediately to the right of patch center
+            # This is the label of the segment containing position i (or i+epsilon)
+            if segment_labels is not None:
+                # Find the largest boundary <= i
+                boundaries_at_or_before = segment_boundaries[segment_boundaries <= i]
+                if len(boundaries_at_or_before) > 0:
+                    # Find index of the most recent boundary
+                    current_boundary = boundaries_at_or_before[-1]
+                    boundary_idx = torch.where(segment_boundaries == current_boundary)[0][0].item()
+                    sample["segment_label"] = segment_labels[boundary_idx]
+                else:
+                    # Shouldn't happen if boundaries include first onset
+                    sample["segment_label"] = "Start"
+
             # Add SSLM patch index if we're returning SSLMs
             if return_sslm_near:
                 sample["sslm_near_patch_idx"] = piano_roll_idx

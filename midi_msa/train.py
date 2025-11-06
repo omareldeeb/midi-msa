@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from midi_msa.data.piano_roll_dataset import PianoRollDataset
 from midi_msa.data.utils import get_piano_roll_patches
-from midi_msa.models.mobilenet_boundary_classifier import MobileNetBoundaryClassifier as BoundaryClassifier
+from midi_msa.models.mobilenet_boundary_classifier import MobileNetBoundaryClassifier as BoundaryClassifier, SEGMENT_LABEL_VOCAB
 from midi_msa.evaluation.metrics import compute_metrics
 
 
@@ -39,6 +39,10 @@ def parse_args():
                         help="Use SSLM with 88s context window (L=704) patches for training")
     parser.add_argument("--output-features", type=int, default=64,
                         help="Number of output features from Mobilenet before final classification layer")
+    parser.add_argument("--predict-segment-label", action="store_true",
+                        help="Enable multi-task learning to predict segment labels")
+    parser.add_argument("--segment-label-loss-weight", type=float, default=1.0,
+                        help="Weight for segment label loss in multi-task learning")
 
     parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for training and validation")
@@ -76,7 +80,8 @@ def get_dataloaders(
     patch_normalize: bool,
     use_sslm_near: bool = False,
     use_sslm_far: bool = False,
-    num_targets: int = 1
+    num_targets: int = 1,
+    segment_function_vocab = None
 ):
     patch_data = get_piano_roll_patches(
         data_dir=data_dir,
@@ -103,29 +108,32 @@ def get_dataloaders(
     metadata_val_non_tubb.reset_index(drop=True, inplace=True)
 
     dataset_train = PianoRollDataset(
-        piano_rolls, metadata_train, 
-        normalize=patch_normalize, 
+        piano_rolls, metadata_train,
+        normalize=patch_normalize,
         num_targets=num_targets,
         sslm_near_patches=sslm_near_patches,
-        sslm_far_patches=sslm_far_patches
+        sslm_far_patches=sslm_far_patches,
+        segment_function_vocab=segment_function_vocab
     )
     dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
 
     dataset_val_tubb = PianoRollDataset(
-        piano_rolls, metadata_val_tubb, 
-        normalize=patch_normalize, 
+        piano_rolls, metadata_val_tubb,
+        normalize=patch_normalize,
         num_targets=num_targets,
         sslm_near_patches=sslm_near_patches,
-        sslm_far_patches=sslm_far_patches
+        sslm_far_patches=sslm_far_patches,
+        segment_function_vocab=segment_function_vocab
     )
     dataloader_val_tubb = DataLoader(dataset_val_tubb, batch_size=batch_size, shuffle=False)
 
     dataset_val_non_tubb = PianoRollDataset(
-        piano_rolls, metadata_val_non_tubb, 
-        normalize=patch_normalize, 
+        piano_rolls, metadata_val_non_tubb,
+        normalize=patch_normalize,
         num_targets=num_targets,
         sslm_near_patches=sslm_near_patches,
-        sslm_far_patches=sslm_far_patches
+        sslm_far_patches=sslm_far_patches,
+        segment_function_vocab=segment_function_vocab
     )
     dataloader_val_non_tubb = DataLoader(dataset_val_non_tubb, batch_size=batch_size, shuffle=False)
 
@@ -143,6 +151,9 @@ def main():
 
     writer = SummaryWriter(log_dir=args.log_dir)
 
+    # Pass segment function vocab if predicting segment labels
+    segment_function_vocab = SEGMENT_LABEL_VOCAB if args.predict_segment_label else None
+
     # Prepare checkpoint path
     model_dir = Path(args.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -153,21 +164,24 @@ def main():
         f"separate_drums_{int(args.separate_drums)}_"
         f"use_sslm_near_{int(args.use_sslm_near)}_"
         f"use_sslm_far_{int(args.use_sslm_far)}_"
-        f"targets_{args.num_targets}.pt"
+        f"targets_{args.num_targets}_"
+        f"predict_seg_label_{int(args.predict_segment_label)}.pt"
     )
     checkpoint_path = model_dir / model_name
 
     model = BoundaryClassifier(
-        num_targets=args.num_targets, 
-        pretrained=args.pretrained, 
+        num_targets=args.num_targets,
+        pretrained=args.pretrained,
         use_sslm_near=args.use_sslm_near,
-        use_sslm_far=args.use_sslm_far
+        use_sslm_far=args.use_sslm_far,
+        segment_function_vocab=segment_function_vocab
     ).to(device)
     if args.resume and checkpoint_path.exists():
         print(f"Loading model from {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path))
 
-    criterion = torch.nn.BCEWithLogitsLoss()
+    boundary_criterion = torch.nn.BCEWithLogitsLoss()
+    segment_label_criterion = torch.nn.CrossEntropyLoss() if segment_function_vocab is not None else None
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -192,7 +206,8 @@ def main():
         patch_normalize=args.patch_normalize,
         use_sslm_near=args.use_sslm_near,
         use_sslm_far=args.use_sslm_far,
-        num_targets=args.num_targets
+        num_targets=args.num_targets,
+        segment_function_vocab=segment_function_vocab
     )
 
     for epoch in range(args.num_epochs):
@@ -209,7 +224,8 @@ def main():
                 patch_normalize=args.patch_normalize,
                 use_sslm_near=args.use_sslm_near,
                 use_sslm_far=args.use_sslm_far,
-                num_targets=args.num_targets
+                num_targets=args.num_targets,
+                segment_function_vocab=segment_function_vocab
             )
 
         # Log example images
@@ -232,10 +248,15 @@ def main():
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
             optimizer.zero_grad()
-            output = model(batch["piano_roll_patch"], 
-                         batch.get("sslm_near_patch"),
-                         batch.get("sslm_far_patch"))
-            loss = criterion(output, batch["targets"].float())
+            output = model(batch["piano_roll_patch"], batch.get("sslm_near_patch"), batch.get("sslm_far_patch"))
+
+            boundary_loss = boundary_criterion(output["boundary_logits"], batch["targets"].float())
+            loss = boundary_loss
+
+            if "segment_label_logits" in output and "segment_label_target" in batch:
+                segment_label_loss = segment_label_criterion(output["segment_label_logits"], batch["segment_label_target"])
+                loss = loss + args.segment_label_loss_weight * segment_label_loss
+
             loss.backward()
             optimizer.step()
 
@@ -258,26 +279,36 @@ def main():
             for batch_tubb in val_dataloader_tubb:
                 batch_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_tubb.items()}
 
-                output = model(batch_tubb["piano_roll_patch"], 
-                             batch_tubb.get("sslm_near_patch"),
-                             batch_tubb.get("sslm_far_patch"))
+                output = model(batch_tubb["piano_roll_patch"], batch_tubb.get("sslm_near_patch"), batch_tubb.get("sslm_far_patch"))
 
-                val_outputs_tubb.append(output)
+                # Extract boundary logits for metrics computation
+                boundary_logits = output["boundary_logits"]
+                boundary_loss = boundary_criterion(boundary_logits, batch_tubb["targets"].float())
+                loss = boundary_loss
+
+                if "segment_label_logits" in output and "segment_label_target" in batch_tubb:
+                    segment_label_loss = segment_label_criterion(output["segment_label_logits"], batch_tubb["segment_label_target"])
+                    loss = loss + args.segment_label_loss_weight * segment_label_loss
+
+                val_outputs_tubb.append(boundary_logits)
                 val_targets_tubb.append(batch_tubb["targets"])
-
-                loss = criterion(output, batch_tubb["targets"].float())
                 val_loss_tubb += loss.item()
+
             for batch_non_tubb in val_dataloader_non_tubb:
                 batch_non_tubb = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch_non_tubb.items()}
 
-                output = model(batch_non_tubb["piano_roll_patch"], 
-                             batch_non_tubb.get("sslm_near_patch"),
-                             batch_non_tubb.get("sslm_far_patch"))
+                output = model(batch_non_tubb["piano_roll_patch"], batch_non_tubb.get("sslm_near_patch"), batch_non_tubb.get("sslm_far_patch"))
 
-                val_outputs_non_tubb.append(output)
+                boundary_logits = output["boundary_logits"]
+                boundary_loss = boundary_criterion(boundary_logits, batch_non_tubb["targets"].float())
+                loss = boundary_loss
+
+                if "segment_label_logits" in output and "segment_label_target" in batch_non_tubb:
+                    segment_label_loss = segment_label_criterion(output["segment_label_logits"], batch_non_tubb["segment_label_target"])
+                    loss = loss + args.segment_label_loss_weight * segment_label_loss
+
+                val_outputs_non_tubb.append(boundary_logits)
                 val_targets_non_tubb.append(batch_non_tubb["targets"])
-
-                loss = criterion(output, batch_non_tubb["targets"].float())
                 val_loss_non_tubb += loss.item()
 
             val_loss_tubb /= len(val_dataloader_tubb)

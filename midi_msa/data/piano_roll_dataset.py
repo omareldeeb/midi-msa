@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 import torch
 from torch.utils.data import Dataset
@@ -21,6 +21,7 @@ class PianoRollDataset(Dataset):
         num_targets=1,  # Additional targets within 2**i bars of center where i < NUM_TARGETS
         sslm_near_patches=None,
         sslm_far_patches=None,
+        segment_function_vocab: Optional[List[str]] = None,
     ):
         self.piano_roll_patches = piano_roll_patches
         self.metadata_df = metadata_df
@@ -30,6 +31,7 @@ class PianoRollDataset(Dataset):
         self.num_targets = num_targets
         self.sslm_near_patches = sslm_near_patches
         self.sslm_far_patches = sslm_far_patches
+        self.segment_function_vocab = segment_function_vocab
 
     def __len__(self):
         return len(self.metadata_df)
@@ -47,11 +49,11 @@ class PianoRollDataset(Dataset):
         # TODO: assumes a single segment boundary per patch
         main_target = [sample["is_segment_boundary"]]
         additional_targets = [(nearest_segment_boundary - center).abs() <= 2**i * self.target_ticks_per_beat * 4 for i in range(self.num_targets - 1)]
-        
+
         targets = torch.tensor(main_target + additional_targets).to(torch.float32)
 
         if self.normalize:
-            piano_roll_patch = piano_roll_patch / piano_roll_patch.max() 
+            piano_roll_patch = piano_roll_patch / piano_roll_patch.max()
 
         if self.transpose_augmentation:
             piano_roll_patch = transpose_augmentation(piano_roll_patch)
@@ -61,13 +63,26 @@ class PianoRollDataset(Dataset):
             "targets": targets,
         }
 
+        # Add segment label target if available and enabled
+        if self.segment_function_vocab is not None and "segment_label" in sample:
+            segment_label = sample["segment_label"]
+            if segment_label in self.segment_function_vocab:
+                segment_label_idx = self.segment_function_vocab.index(segment_label)
+            else:
+                # Default to instrumental if unknown (or first label if Instrumental not in vocab)
+                if "Instrumental" in self.segment_function_vocab:
+                    segment_label_idx = self.segment_function_vocab.index("Instrumental")
+                else:
+                    segment_label_idx = 0  # Fallback to first label
+            item["segment_label_target"] = torch.tensor(segment_label_idx, dtype=torch.long)
+
         if self.sslm_near_patches is not None:
             sslm_near = self.sslm_near_patches[sample["sslm_near_patch_idx"]]
             if len(sslm_near.shape) == 2:
                 sslm_near = sslm_near.unsqueeze(0)  # Add channel dimension if missing
             sslm_near_patch = sslm_near[..., from_tick:to_tick]
             item["sslm_near_patch"] = sslm_near_patch
-        
+
         if self.sslm_far_patches is not None:
             sslm_far = self.sslm_far_patches[sample["sslm_far_patch_idx"]]
             if len(sslm_far.shape) == 2:
