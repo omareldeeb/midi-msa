@@ -267,7 +267,7 @@ class TCNMidiDataset(Dataset):
                 torch.save(result, cache_path)
 
         if self.transpose_augmentation:
-            piano_roll = transpose_augmentation(piano_roll)
+            piano_roll_patch = transpose_augmentation(piano_roll_patch)
 
         # Cut silence from beginning
         # print(f"Piano roll shape before trimming: {piano_roll.shape}")

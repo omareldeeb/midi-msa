@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 import torch
 import torch.nn as nn
 
@@ -247,157 +246,33 @@ class TCN(nn.Module):
             function_outputs=function_outputs
         )
 
-    def compute_predictions(
-        self,
-        outputs: TCNOutput,
-        ticks_per_beat: int,
-        boundary_threshold: float = 0.0,
-        local_maxima_filter_size: int = 97,  # 4 * 24 + 1
-        window_past_beats: float = 12.0,
-        window_future_beats: float = 12.0
-    ) -> Dict[str, np.ndarray]:
-        """
-        Compute segment boundaries and labels from model outputs.
+    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+        measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
+        pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
+        pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
 
-        Args:
-            outputs: TCNOutput object containing model predictions
-            ticks_per_beat: MIDI ticks per beat resolution (e.g., 4, 48)
-            boundary_threshold: Threshold for boundary detection (default: 0.0)
-            local_maxima_filter_size: Filter size for local maxima detection (default: 97)
-            window_past_beats: Past window size in beats for peak picking (default: 12.0)
-            window_future_beats: Future window size in beats for peak picking (default: 12.0)
-
-        Returns:
-            Dictionary containing:
-                - 'boundaries': Array of boundary times in ticks
-                - 'segments': Array of (start, end) tuples in ticks
-                - 'labels': Array of predicted segment function indices
-                - 'label_probs': Array of label probabilities for each segment
-        """
-        # Process segment boundaries
-        segment_prob = torch.sigmoid(outputs.segment_output.squeeze())
-
-        # Apply local maxima
-        prob_sections, _ = self._local_maxima(segment_prob, filter_size=local_maxima_filter_size)
-
-        # Peak picking
-        boundary_candidates = self._peak_picking(
-            prob_sections.detach().cpu().numpy(),
-            window_past=int(window_past_beats * ticks_per_beat),
-            window_future=int(window_future_beats * ticks_per_beat)
-        )
-        boundary = boundary_candidates > boundary_threshold
-
-        # Convert to ticks
-        duration_ticks = len(prob_sections)
-        # pred_boundary_ticks = self._event_frames_to_ticks(boundary, ticks_per_frame=1)
-        pred_boundary_ticks = np.where(boundary)[0]
-
-        # Add start and end if necessary
-        if len(pred_boundary_ticks) == 0 or pred_boundary_ticks[0] != 0:
-            pred_boundary_ticks = np.insert(pred_boundary_ticks, 0, 0)
-
-        if pred_boundary_ticks[-1] != duration_ticks - 1:
-            pred_boundary_ticks = np.append(pred_boundary_ticks, duration_ticks - 1)
-
-        # Create segments
-        pred_segments = np.stack([pred_boundary_ticks[:-1], pred_boundary_ticks[1:]]).T
-
-        # Predict labels for each segment
-        pred_boundary_indices = np.flatnonzero(boundary)
-        # Remove first boundary at 0 to avoid empty first segment
-        if len(pred_boundary_indices) > 0 and pred_boundary_indices[0] == 0:
-            pred_boundary_indices = pred_boundary_indices[1:]
-        # Remove last boundary if it's at or past the end to avoid empty last segment
-        if len(pred_boundary_indices) > 0 and pred_boundary_indices[-1] >= duration_ticks - 1:
-            pred_boundary_indices = pred_boundary_indices[:-1]
-
-        # Split function probabilities by segment boundaries
-        function_probs = torch.softmax(outputs.function_outputs, dim=1).detach().cpu().numpy()
-
-        if len(pred_boundary_indices) > 0:
-            prob_segment_function = np.split(function_probs, pred_boundary_indices, axis=-1)
-        else:
-            prob_segment_function = [function_probs]
-
-        # Calculate mean probability for each segment and get labels
+        pred_boundary_ticks = []
         pred_labels = []
-        pred_label_probs = []
-        for p in prob_segment_function:
-            if p.size > 0:
-                mean_probs = p.mean(axis=-1).squeeze()
-                pred_labels.append(mean_probs.argmax())
-                pred_label_probs.append(mean_probs)
-            else:
-                # Handle empty segments
-                pred_labels.append(0)
-                pred_label_probs.append(np.zeros(outputs.function_outputs.shape[1]))
+        for i, measure_tick in enumerate(measure_ticks_np):
+            measure_left = 0
+            if i - 1 >= 0:
+                measure_left = measure_ticks_np[i - 1]
+            window_left = (measure_tick - measure_left) // 4
 
-        return {
-            'boundaries': pred_boundary_ticks,
-            'segments': pred_segments,
-            'labels': np.array(pred_labels),
-            'label_probs': np.array(pred_label_probs)
-        }
+            measure_right = pred_boundary_probs.shape[-1]
+            if i + 1 < len(measure_ticks_np):
+                measure_right = measure_ticks_np[i + 1]
+            window_right = (measure_right - measure_tick) // 4
 
-    @staticmethod
-    def _local_maxima(tensor, filter_size=41):
-        """Find local maxima in a tensor."""
-        assert len(tensor.shape) in (1, 2), 'Input tensor should have 1 or 2 dimensions'
-        assert filter_size % 2 == 1, 'Filter size should be an odd number'
+            probs = pred_boundary_probs[measure_tick - window_left : measure_tick + window_right]
+            if len(probs) > 0:
+                max_prob = np.max(probs)
+                if max_prob >= threshold:
+                    pred_function_probs_window = pred_function_probs[measure_left:measure_right]
+                    prob_sums = np.sum(pred_function_probs_window, axis=-1)
+                    if len(prob_sums) > 0:
+                        pred_function_index = prob_sums.argmax()
+                        pred_boundary_ticks.append(measure_tick)
+                        pred_labels.append(pred_function_index)
 
-        original_shape = tensor.shape
-        if len(original_shape) == 1:
-            tensor = tensor.unsqueeze(0)
-
-        # Pad the input array with the minimum value
-        padding = filter_size // 2
-        padded_arr = torch.nn.functional.pad(tensor, (padding, padding), mode='constant', value=-torch.inf)
-
-        # Create a rolling window view of the padded array
-        rolling_view = padded_arr.unfold(1, filter_size, 1)
-
-        # Find the indices of the local maxima
-        center = filter_size // 2
-        local_maxima_mask = torch.eq(rolling_view[:, :, center], torch.max(rolling_view, dim=-1).values)
-        local_maxima_indices = local_maxima_mask.nonzero()
-
-        # Initialize a new PyTorch tensor with zeros and the same shape as the input tensor
-        output_arr = torch.zeros_like(tensor)
-
-        # Set the local maxima values in the output tensor
-        output_arr[local_maxima_mask] = tensor[local_maxima_mask]
-
-        output_arr = output_arr.reshape(original_shape)
-
-        return output_arr, local_maxima_indices
-
-    @staticmethod
-    def _peak_picking(boundary_activation, window_past=12, window_future=6):
-        """Peak picking algorithm for boundary detection."""
-        # Find local maxima using a sliding window
-        window_size = window_past + window_future
-        assert window_size % 2 == 0, 'window_past + window_future must be even'
-        window_size += 1
-
-        # Pad boundary_activation
-        boundary_activation_padded = np.pad(boundary_activation, (window_past, window_future), mode='constant')
-        max_filter = sliding_window_view(boundary_activation_padded, window_size)
-        local_maxima = (boundary_activation == np.max(max_filter, axis=-1)) & (boundary_activation > 0)
-
-        # Compute strength values by subtracting the mean of the past and future windows
-        past_window_filter = sliding_window_view(boundary_activation_padded[:-(window_future + 1)], window_past)
-        future_window_filter = sliding_window_view(boundary_activation_padded[window_past + 1:], window_future)
-        past_mean = np.mean(past_window_filter, axis=-1)
-        future_mean = np.mean(future_window_filter, axis=-1)
-        strength_values = boundary_activation - ((past_mean + future_mean) / 2)
-
-        # Get boundary candidates and their corresponding strength values
-        boundary_candidates = np.flatnonzero(local_maxima)
-        strength_values = strength_values[boundary_candidates]
-
-        strength_activations = np.zeros_like(boundary_activation)
-        strength_activations[boundary_candidates] = strength_values
-
-        return strength_activations
-    
+        return np.array(pred_boundary_ticks), np.array(pred_labels)

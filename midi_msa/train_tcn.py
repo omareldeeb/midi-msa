@@ -264,9 +264,7 @@ def validate(
                     # plt.plot(boundaries_target.squeeze().cpu().numpy(), label='Target Boundaries')
                     # plt.legend()
                     # plt.show()
-                    predictions = model.compute_predictions(outputs=outputs, ticks_per_beat=ticks_per_beat)
-                    predicted_boundary_ticks = predictions['boundaries']
-                    predicted_label_indices = predictions['labels']
+                    predicted_boundary_ticks, predicted_label_indices = model.compute_predictions(output=outputs, measure_ticks=measure_ticks)
                     estimated_intervals = np.column_stack((predicted_boundary_ticks[:-1], predicted_boundary_ticks[1:]))
 
                     if len(estimated_intervals) == 0:
@@ -276,9 +274,7 @@ def validate(
                     reference_intervals = np.column_stack((gt_boundary_ticks[:-1], gt_boundary_ticks[1:]))
                     boundary_prec, boundary_recall, boundary_f1 = mir_eval.segment.detection(
                         reference_intervals=reference_intervals,
-                        estimated_intervals=estimated_intervals,
-                        #  0.5 seconds at 120 BPM
-                        window=0.5 * (ticks_per_beat * 120 / 60)
+                        estimated_intervals=estimated_intervals
                     )
                     total_boundary_prec += boundary_prec
                     total_boundary_recall += boundary_recall
