@@ -242,12 +242,18 @@ def validate(
                 if boundaries_pred.dim() == 2:  # batch_size > 1
                     print("Warning: Skipping boundary metrics for batch size > 1")
                 else:  # Single sample
-                    # import matplotlib.pyplot as plt
-                    # plt.plot(boundaries_pred.squeeze().cpu().numpy(), label='Predicted Boundaries')
-                    # plt.plot(boundaries_target.squeeze().cpu().numpy(), label='Target Boundaries')
-                    # plt.legend()
-                    # plt.show()
                     predicted_boundary_ticks, predicted_label_indices = model.compute_predictions(output=outputs, measure_ticks=measure_ticks)
+                    # Returned pred boundaries and pred labels always same length
+                    if len(predicted_boundary_ticks) > 0 and predicted_boundary_ticks[0] != 0:
+                        predicted_boundary_ticks = np.insert(predicted_boundary_ticks, 0, 0)
+                        start_label_index = label_map.index("Start") if "Start" in label_map else 0
+                        predicted_label_indices = np.insert(predicted_label_indices, 0, start_label_index)
+                    # Pred boundaries needs to include end tick so intervals are same length as labels after column stack
+                    if len(predicted_boundary_ticks) > 0 and predicted_boundary_ticks[-1] != boundaries_pred.shape[-1] - 1:
+                        predicted_boundary_ticks = np.append(predicted_boundary_ticks, boundaries_pred.shape[-1] - 1)
+                    elif len(predicted_boundary_ticks) > 0:  # Last tick is the end, so final label doesn't make sense
+                        predicted_label_indices = predicted_label_indices[:-1]
+
                     estimated_intervals = np.column_stack((predicted_boundary_ticks[:-1], predicted_boundary_ticks[1:]))
 
                     if len(estimated_intervals) == 0:

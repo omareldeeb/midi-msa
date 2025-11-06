@@ -277,13 +277,4 @@ class TCN(nn.Module):
                         pred_boundary_ticks.append(measure_tick)
                         pred_labels.append(pred_function_index)
 
-        if len(pred_boundary_ticks) == 0 or pred_boundary_ticks[0] != 0:
-            pred_boundary_ticks.insert(0, 0)
-            start_label_index = self.segment_function_vocab.index("Start") if "Start" in self.segment_function_vocab else 0
-            pred_labels.insert(0, start_label_index)
-        if len(pred_boundary_ticks) == 0 or pred_boundary_ticks[-1] != pred_boundary_probs.shape[-1] - 1:
-            pred_boundary_ticks.append(pred_boundary_probs.shape[-1] - 1)
-            end_label_index = self.segment_function_vocab.index("End") if "End" in self.segment_function_vocab else 0
-            pred_labels.append(end_label_index)
-
         return np.array(pred_boundary_ticks), np.array(pred_labels)
