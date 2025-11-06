@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from midi_msa.data.label_preprocessor import LABEL_MAP
+
 
 @dataclass
 class TCNOutput:
@@ -274,5 +276,14 @@ class TCN(nn.Module):
                         pred_function_index = prob_sums.argmax()
                         pred_boundary_ticks.append(measure_tick)
                         pred_labels.append(pred_function_index)
+
+        if len(pred_boundary_ticks) == 0 or pred_boundary_ticks[0] != 0:
+            pred_boundary_ticks.insert(0, 0)
+            start_label_index = LABEL_MAP.index("Start") if "Start" in LABEL_MAP else 0
+            pred_labels.insert(0, start_label_index)
+        if len(pred_boundary_ticks) == 0 or pred_boundary_ticks[-1] != pred_boundary_probs.shape[-1] - 1:
+            pred_boundary_ticks.append(pred_boundary_probs.shape[-1] - 1)
+            end_label_index = LABEL_MAP.index("End") if "End" in LABEL_MAP else 0
+            pred_labels.append(end_label_index)
 
         return np.array(pred_boundary_ticks), np.array(pred_labels)
