@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 
 import mido
 import numpy as np
@@ -193,16 +193,22 @@ def create_piano_roll(
                     decay = np.linspace(1.0, 0.0, end - start) * intensity / max_intensity
                     piano_roll[1, overtone_pitch_class, start:end] = velocity * intensity * decay
 
-    # Downsample to target_ticks_per_beat ticks per beat using max pooling
-    if ticks_per_beat > target_ticks_per_beat:
-        pool_size = ticks_per_beat // target_ticks_per_beat
-        try:
-            piano_roll = F.max_pool1d(torch.tensor(piano_roll), pool_size, stride=pool_size).numpy()
-        except Exception as e:
-            print(e)
-            print(piano_roll.shape)
-            return None
-    
+    # Calculate the exact target length to maintain alignment with tick markers
+    resample_ratio = target_ticks_per_beat / ticks_per_beat
+    target_length = int(duration_ticks * resample_ratio)
+
+    try:
+        piano_roll_tensor = torch.tensor(piano_roll)
+        # Use adaptive max pooling to preserve maximum velocities while achieving exact target length
+        piano_roll = F.adaptive_max_pool1d(
+            piano_roll_tensor,
+            output_size=target_length
+        ).numpy()
+    except Exception as e:
+        print(e)
+        print(piano_roll.shape)
+        return None
+
 
     return piano_roll
 
@@ -321,11 +327,11 @@ def create_lakh_dataset(
             }
 
             if compute_sslm_near:
-                sslm_near = compute_sslm(piano_roll, L=112)  # 14s @ 120 BPM <=> L=112
+                sslm_near, _ = compute_sslms(piano_roll)
                 data["sslm_near"] = sslm_near
             
             if compute_sslm_far:
-                sslm_far = compute_sslm(piano_roll, L=704)  # 88s @ 120 BPM <=> L=704
+                _, sslm_far = compute_sslms(piano_roll)
                 data["sslm_far"] = sslm_far
 
             torch.save(data, save_path)
@@ -510,69 +516,86 @@ def concatenate_time_frames_torch(tensor, m=2):
     return stacked_frames
 
 
-def compute_sslm(piano_roll: torch.Tensor, L: int = 112) -> torch.Tensor:
-    piano_roll = torch.tensor(piano_roll, dtype=torch.float32)
+def compute_sslms(piano_roll: torch.Tensor, L: int = 720) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Returns R \in R^{T' x L}: time x lag relationship matrix with adaptive normalization,
+    sigmoid smoothing, and value quantization to `n_levels` levels in [0,1].
+    """
 
-    # "In order to reduce the amount of data and processing time, the input spectra can be max-pooled along the time axis by an integer factor p = 2"
-    # x_prime = torch.nn.functional.max_pool2d(piano_roll, (1, p))
-    x_prime = piano_roll
+    X = torch.as_tensor(piano_roll.squeeze(), dtype=torch.float32)  # expected shape [F, T]
+    assert X.dim() == 2, "input_spectrogram must be [F, T]"
 
-    # "By performing a DCT of type II on each frame with the static 0-component omitted, we arrive at a time series of MFCCs"
-    mfcc = scipy.fftpack.dct(x_prime.numpy(force=True), type=2, axis=-2, norm='ortho')[..., 1:, :]
-    mfcc = torch.tensor(mfcc)
+    p = 4 # no downsampling for now
+    C = 2 # context frames on each side
+    kappa = 0.1 # quantile for adaptive normalization
+    num_features = 128
 
-    # We bag several frames within a time context of length m, building a time series
-    m = 2
-    bagged_mfcc = concatenate_time_frames_torch(mfcc, m=m)
+    # ---- 1) Downsample time by max-pooling (factor p) ----
+    # treat frequency bins as channels for 1D pooling over time
+    X_pool = torch.nn.functional.max_pool1d(X.unsqueeze(0), kernel_size=p, stride=p)  # [1, F, T']
+    X_pool = X_pool.squeeze(0)  # [F, T'] = x'
+    T_prime = X_pool.shape[-1]
 
-    T = bagged_mfcc.shape[-1]
+    # ---- 2) Per-frame DCT-II (drop DC bin) → MFCC-like ----
+    # scipy works on CPU; move to CPU temporarily if needed
+    X_cpu = X_pool.detach().to("cpu").numpy()
+    mfcc_np = scipy.fftpack.dct(X_cpu, type=2, axis=0, norm=None)[1:, :]  # drop 0th coeff → [F_dct-1, T']
+    mfcc = torch.from_numpy(mfcc_np).to(dtype=torch.float32)  # [F', T']
 
-    # flatten all leading dims into one “feature” dimension F_total
-    F_total = int(torch.tensor(bagged_mfcc.shape[:-1]).prod().item())
-    X = bagged_mfcc.reshape(F_total, T) # [F_total, T]
+    # ---- 3) Context stacking: frames within ±C  (total 2C+1) ----
+    # Expect: concatenate_time_frames_torch(mfcc, m=C) → [F'*(2C+1), T'] (aligned centers)
+    bagged = concatenate_time_frames_torch(mfcc, m=C)  # user-provided helper
+    # L2-normalize each time slice
+    X_norm = torch.nn.functional.normalize(bagged, dim=0, eps=1e-8)  # [F_total, T']
 
-    # normalize each time‐frame vector
-    X_norm = torch.nn.functional.normalize(X, dim=0)    # [F_total, T]
+    # ---- 4) Full cosine distance and convert to lag matrix ----
+    sims = X_norm.T @ X_norm                         # [T', T']
+    dists = 1.0 - sims                               # [T', T']
+    T = dists.shape[0]
+    max_lag = min(L, T)                              # guard if L > T'
+    lags = torch.arange(max_lag)      # [L]
+    t_idx = torch.arange(T).unsqueeze(0)     # [1, T]
+    t_minus_l = (t_idx - lags.unsqueeze(1)) % T              # [L, T]
+    # Build D_{t,l} = dcos(x_t, x_{t-l}) with time-circular wrap
+    D = dists[t_idx.expand_as(t_minus_l), t_minus_l]         # [L, T]
+    D = D.T.contiguous()                                     # [T, L]  (time x lag)
 
-    # build full cosine‐similarity matrix
-    # sims[i,j] = cos( X_norm[:,i], X_norm[:,j] )
-    sims = X_norm.T @ X_norm    # [T, T]
-    dists = 1.0 - sims  # [T, T]
+    # ---- 5) Adaptive normalization with row-wise quantiles (eq. 2) ----
+    # q[t] = Q_kappa(D[t, 1..L])
+    q = torch.quantile(D, q=kappa, dim=1, keepdim=True)      # [T, 1]
+    # epsilon_{t,l} = 0.5 * ( q[t] + q[(t-l) mod T] )
+    # Reuse index grid we used earlier but in [L, T] order; rebuild in [T, L]
+    l_idx = torch.arange(max_lag).unsqueeze(0).expand(T, -1)  # [T, L]
+    t_grid = torch.arange(T).unsqueeze(1).expand(-1, max_lag) # [T, L]
+    t_minus_l_grid = (t_grid - l_idx) % T                                     # [T, L]
+    eps = 0.5 * (q[t_grid] + q[t_minus_l_grid])  # [T, L, 1]
+    eps = eps.squeeze(-1)                        # [T, L]
+    eps = torch.clamp(eps, min=1e-6)
 
-    # build index grids to extract D[l, i] = dists[i, (i-l)%T]
-    # max_lag = L // p
-    max_lag = L
-    lags   = torch.arange(max_lag, device=X.device)
-    i_idx  = torch.arange(T, device=X.device).unsqueeze(0)      # [1, T]
-    j_idx  = (i_idx - lags.unsqueeze(1)) % T                    # [max_lag, T]
+    # ---- 6) Sigmoid smoothing (eq. 3) → relationship matrix R ----
+    R = torch.sigmoid(1.0 - (D / eps))                                        # [T, L], values in (0,1)
 
-    D = dists[i_idx.expand(max_lag, T), j_idx]  # [max_lag, T]
-    D_t = D.T   # [T, max_lag]
+    # Subsample features by maxpooling: 6 for sslm_near, 20 for sslm_far
+    sslm_near = torch.nn.functional.max_pool1d(R.unsqueeze(0), kernel_size=6, stride=6).squeeze(0)
+    sslm_far  = torch.nn.functional.max_pool1d(R.unsqueeze(0), kernel_size=20, stride=20).squeeze(0)
 
-    max_lag, T = D.shape
-    # print(max_lag, T)
+    # Limit feature dimension to most similar 100 lags
+    # most_similar_near = torch.topk(sslm_near, k=100, dim=1).indices
+    # most_similar_far  = torch.topk(sslm_far,  k=100, dim=1).indices
+    # sslm_near = torch.gather(sslm_near, 1, most_similar_near)
+    # sslm_far  = torch.gather(sslm_far, 1, most_similar_far)
+    sslm_near = sslm_near[:, :num_features]
+    sslm_far  = sslm_far[:, :num_features]
 
-    # replicate row i distances across the lag‐axis:
-    orig = D_t.unsqueeze(1).expand(-1, max_lag, -1) # [T, max_lag, max_lag]
+    # Upsample by factor 4 in time to match T' (from p=4 maxpool earlier)
+    target_size = (piano_roll.shape[-1], num_features)
+    sslm_near = torch.nn.functional.interpolate(sslm_near.unsqueeze(0).unsqueeze(0), size=target_size, mode='bicubic').squeeze(0).squeeze(0)
+    sslm_far  = torch.nn.functional.interpolate(sslm_far.unsqueeze(0).unsqueeze(0), size=target_size, mode='bicubic').squeeze(0).squeeze(0)
 
-    # for each lag l, roll the time-axis so row i -> row i-l:
-    rolled = torch.stack([
-        torch.roll(D_t, shifts=-l, dims=0) 
-        for l in range(max_lag)
-    ], dim=1)   # [T, max_lag, max_lag]
-
-    # concatenate along the features axis (the j‐axis) to get 2·max_lag values:
-    combined = torch.cat([orig, rolled], dim=2) # [T, max_lag, 2*max_lag]
-
-    # compute the k-quantile along that last axis for each (i, l):
-    k = 0.1
-    eps = torch.quantile(combined, q=k, dim=2)  # [T, max_lag]
-
-    # smooth step from Eq. 5:
-    R_t = torch.sigmoid(1.0 - D_t / eps)    # [T, max_lag]
-    R = R_t.T   # [max_lag, T]
-    
-    return R
+    # Transpose to get [num_lags, T]
+    sslm_near = sslm_near.T
+    sslm_far  = sslm_far.T
+    return sslm_near, sslm_far
 
 
 def create_target_activation(
