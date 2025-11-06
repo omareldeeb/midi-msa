@@ -240,24 +240,7 @@ def validate(
 
                 # Batch dim
                 if boundaries_pred.dim() == 2:  # batch_size > 1
-                    # Process each sample in the batch
-                    batch_acc = []
-                    batch_prec = []
-                    batch_recall = []
-                    for i in range(boundaries_pred.shape[0]):
-                        acc, prec, recall = acc_prec_recall(
-                            boundaries_pred[i].cpu()[measure_ticks[i]],
-                            boundaries_target[i].cpu()[measure_ticks[i]]
-                        )
-                        batch_acc.append(acc)
-                        batch_prec.append(prec)
-                        batch_recall.append(recall)
-
-                    if batch_acc:  # If we have valid metrics
-                        total_boundary_acc += sum(batch_acc) / len(batch_acc)
-                        total_boundary_prec += sum(batch_prec) / len(batch_prec)
-                        total_boundary_recall += sum(batch_recall) / len(batch_recall)
-                        num_boundary_batches += 1
+                    print("Warning: Skipping boundary metrics for batch size > 1")
                 else:  # Single sample
                     # import matplotlib.pyplot as plt
                     # plt.plot(boundaries_pred.squeeze().cpu().numpy(), label='Predicted Boundaries')
