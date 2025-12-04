@@ -1,0 +1,68 @@
+{
+  "n_folds": 1,
+  "aggregated_metrics": {
+    "loss": {
+      "mean": 0.14777943521948556,
+      "std": 0.0,
+      "values": [
+        0.14777943521948556
+      ]
+    },
+    "accuracy": {
+      "mean": 0.9438356164383561,
+      "std": 0.0,
+      "values": [
+        0.9438356164383561
+      ]
+    },
+    "precision": {
+      "mean": 0.7552447552447552,
+      "std": 0.0,
+      "values": [
+        0.7552447552447552
+      ]
+    },
+    "recall": {
+      "mean": 0.6967741935483871,
+      "std": 0.0,
+      "values": [
+        0.6967741935483871
+      ]
+    },
+    "f1": {
+      "mean": 0.7248322097732084,
+      "std": 0.0,
+      "values": [
+        0.7248322097732084
+      ]
+    }
+  },
+  "fold_results": [
+    {
+      "loss": 0.14777943521948556,
+      "accuracy": 0.9438356164383561,
+      "precision": 0.7552447552447552,
+      "recall": 0.6967741935483871,
+      "f1": 0.7248322097732084,
+      "num_files": 100,
+      "num_patches": 1460
+    }
+  ],
+  "config": {
+    "data_dir": "/Volumes/ExtremePro/Users/omar/Projects/ComposersAssistant/lakh_data_4_overtones_True_separate_drums_True_sslm_near",
+    "split_files": [
+      "/Users/omar/Downloads/cv_split_files/cv_split_0.json"
+    ],
+    "model_checkpoints": [
+      "/Users/omar/Downloads/usg_checkpoints/cv_0/pretrain_True_mn_overtones_True_normalized_1_separate_drums_1_use_sslm_near_1_use_sslm_far_1_targets_1_predict_seg_label_1.pt"
+    ],
+    "output_file": "cv0_evaluation_results.json",
+    "window_half_ticks": 256,
+    "patch_normalize": true,
+    "use_sslm_near": true,
+    "use_sslm_far": true,
+    "output_features": 64,
+    "predict_segment_label": true,
+    "device": "mps"
+  }
+}
