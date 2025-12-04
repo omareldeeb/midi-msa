@@ -109,7 +109,7 @@ def parse_markers(markers_qn_path: Union[Path, str], file_id: str, ticks_per_bea
         markers = json.load(f)
     
     marker_qns = markers[file_id]
-    markers_ticks = [int(round(x[0] * ticks_per_beat)) for x in marker_qns]
+    markers_ticks = [int(round(x[0] * ticks_per_beat)) for x in marker_qns if not x[1].startswith('Fadeout')]
 
     markers_ticks = list(set(markers_ticks))
     markers_ticks.sort()
@@ -429,8 +429,8 @@ def get_piano_roll_patches(
         negative_undersampling_factor = negative_undersampling_factor if 'train' in str(piano_roll_path) else 1
 
         piano_roll = data["piano_roll"]
-        segment_boundaries = data["segment_boundaries"]
-        measure_boundaries = data["measure_ticks"]
+        segment_boundaries = torch.tensor(data["segment_boundaries"])
+        measure_boundaries = torch.tensor(data["measure_ticks"])
         segment_labels = data.get("segment_labels", None)
 
         # Compute first and last nonzero columns of the first channel (first and last onset, respectively)
@@ -483,29 +483,28 @@ def get_piano_roll_patches(
         # TODO: SSLMs should be precomputed and saved like the piano rolls
         if return_sslm_near:
             # Check if precomputed, otherwise load from file or compute
-            data = torch.load(piano_roll_path)
             if "sslm_near" in data:
                 sslm_near = data["sslm_near"]
-            elif "sslm" in data:  # Backwards compatibility with old format
-                sslm_near = data["sslm"]
             elif piano_roll_idx in _sslms_near:
                 sslm_near = _sslms_near[piano_roll_idx]
             else:
-                sslm_near, _ = compute_sslms(piano_roll, L=704)  # 88s <=> L=704
+                sslm_piano_roll = piano_roll.sum(dim=0, keepdim=False)
+                sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=704)  # 88s <=> L=704
                 _sslms_near[piano_roll_idx] = sslm_near
-            sslms_near.append(sslm_near)
+                _sslms_far[piano_roll_idx] = sslm_far
+                sslms_near.append(sslm_near)
+                sslms_far.append(sslm_far)
         
         if return_sslm_far:
-            # Check if precomputed, otherwise load from file or compute
-            data = torch.load(piano_roll_path)
             if "sslm_far" in data:
                 sslm_far = data["sslm_far"]
             elif piano_roll_idx in _sslms_far:
                 sslm_far = _sslms_far[piano_roll_idx]
             else:
-                _, sslm_far = compute_sslms(piano_roll, L=704)  # 88s <=> L=704
+                sslm_piano_roll = piano_roll.sum(dim=0, keepdim=False)
+                _, sslm_far = compute_sslms(sslm_piano_roll, L=704)  # 88s <=> L=704
                 _sslms_far[piano_roll_idx] = sslm_far
-            sslms_far.append(sslm_far)
+                sslms_far.append(sslm_far)
 
         for i in measure_boundaries:
             if not pad_boundary_patches and (i - padding <= 0 or i + padding >= piano_roll.shape[-1]):
