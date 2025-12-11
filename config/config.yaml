@@ -1,0 +1,41 @@
+defaults:
+  - method: usg
+  - _self_
+
+# Data paths
+data_dir: ???  # Must be specified
+annotation_dir: null
+midi_dir: null
+
+# Piano roll parameters
+target_ticks_per_beat: 4
+instrument_overtones: true
+separate_drums: true
+
+# Training parameters
+batch_size: 32
+num_epochs: 50
+lr: 1e-3
+weight_decay: 1e-4
+
+# Device and paths
+device: null  # Auto-detect if null
+checkpoint_dir: checkpoints
+log_dir: runs
+
+# Cross-validation
+split_files: null
+val_split: 0.1
+
+# Logging
+wandb:
+  enabled: false
+  project: null
+  entity: null
+  name: null
+  tags: []
+
+# System
+num_workers: 4
+seed: null
+resume: false

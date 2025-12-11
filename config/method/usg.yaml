@@ -1,0 +1,22 @@
+# @package _global_
+method: usg
+
+# USG-specific data parameters
+window_half_ticks: 256
+positive_oversampling_factor: 2
+negative_undersampling_factor: 1
+pad_boundary_patches: true
+patch_normalize: false
+
+# USG-specific model parameters
+pretrained: false
+output_features: 64
+num_targets: 1
+
+# SSLM features
+use_sslm_near: false
+use_sslm_far: false
+
+# Multi-task learning
+predict_segment_label: false
+segment_label_loss_weight: 1.0

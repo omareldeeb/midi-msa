@@ -1,0 +1,29 @@
+# @package _global_
+method: tcn
+
+# TCN-specific paths
+piano_roll_dir: ???  # Cache directory for piano rolls
+sslm_dir: null  # Optional cache for SSLMs
+
+# TCN model parameters
+tcn_layers: 2
+tcn_kernel_size: 5
+conv_filters: 20
+
+# Task configuration
+compute_beats: false
+compute_downbeats: false
+compute_segments: true
+
+# Loss weights
+beat_loss_weight: 1.0
+downbeat_loss_weight: 3.0
+section_loss_weight: 10.0
+function_loss_weight: 1.0
+
+# Training
+clip_norm: 1.0
+save_every: 10
+
+# Transpose augmentation
+transpose_augmentation: true

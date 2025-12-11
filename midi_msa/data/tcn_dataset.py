@@ -1,25 +1,17 @@
-import os
 import json
 from pathlib import Path
-from typing import List, Dict, Optional, Union, Tuple
+from typing import List, Dict, Optional, Union
 import glob
 
 import torch
-from torch.utils.data import Dataset
 from tqdm import tqdm
-import numpy as np
-# import madmom
 
-from .utils import parse_midi, create_piano_roll, parse_markers, create_target_activation, widen_temporal_events, compute_sslms
+from .base_dataset import BaseMidiDataset
+from .utils import widen_temporal_events, compute_sslms
 from .label_preprocessor import preprocess_labels
 
 
-def transpose_augmentation(piano_roll, transpose_range=6):
-    transpose_amount = torch.randint(-transpose_range, transpose_range, ())
-    return torch.roll(piano_roll, transpose_amount.item(), dims=-2) # type: ignore
-
-
-class TCNMidiDataset(Dataset):
+class TCNMidiDataset(BaseMidiDataset):
     def __init__(
         self,
         midi_dir: Union[str, Path],
@@ -37,34 +29,22 @@ class TCNMidiDataset(Dataset):
         transpose_augmentation: bool = True,
         **kwargs
     ):
-        """
-        TCN Dataset for MIDI files with functional segment annotations.
+        super().__init__(
+            target_ticks_per_beat=target_ticks_per_beat,
+            instrument_overtones=instrument_overtones,
+            separate_drums=separate_drums,
+            transpose_augmentation=transpose_augmentation,
+            compute_sslms=sslms_dir is not None,
+            segment_function_vocab=segment_function_vocab,
+        )
 
-        Args:
-            midi_dir: Directory containing MIDI files
-            annotation_dir: Directory containing annotation files (*_labels_coarse_qn.json)
-            midi_files: Optional list of specific MIDI file IDs to use
-            target_ticks_per_beat: Target resolution for piano rolls
-            segment_function_vocab: List of segment function labels to classify
-            compute_beats: Whether to compute beat activations
-            compute_downbeats: Whether to compute downbeat activations
-            compute_segments: Whether to compute segment boundary activations
-            instrument_overtones: Whether to include instrument overtones in piano roll
-            separate_drums: Whether to separate drum tracks in piano roll
-            piano_roll_dir: Optional directory to cache computed piano rolls
-        """
         self.midi_dir = Path(midi_dir)
         self.annotation_dir = Path(annotation_dir)
-        self.target_ticks_per_beat = target_ticks_per_beat
         self.compute_beats = compute_beats
         self.compute_downbeats = compute_downbeats
         self.compute_segments = compute_segments
-        self.instrument_overtones = instrument_overtones
-        self.separate_drums = separate_drums
         self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
         self.sslms_dir = Path(sslms_dir) if sslms_dir else None
-        self.transpose_augmentation = transpose_augmentation
-        self.compute_sslms = sslms_dir is not None
 
         # Create cache directory if it doesn't exist
         if self.piano_roll_dir:
@@ -131,62 +111,10 @@ class TCNMidiDataset(Dataset):
         cache_filename = f"{file_id}_sslm_tp{self.target_ticks_per_beat}.pt"
         return self.sslms_dir / cache_filename
 
-    def _compute_piano_roll(self, file_id: str) -> Optional[Dict[str, torch.Tensor]]:
-        """
-        Compute piano roll and adjusted time signatures for a given file.
-
-        Returns:
-            Dictionary containing 'piano_roll' and 'time_signatures', or None if computation fails
-        """
+    def _compute_piano_roll(self, file_id: str) -> Optional[Dict]:
+        """Compute piano roll using base class method."""
         midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-
-        try:
-            # Parse MIDI file
-            track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
-
-            # Create piano rolls for each track and merge them
-            piano_rolls = []
-            for track_name, note_data in track_data.items():
-                piano_roll = create_piano_roll(
-                    note_data,
-                    ticks_per_beat,
-                    chroma=False,
-                    target_ticks_per_beat=self.target_ticks_per_beat,
-                    instrument_overtones=self.instrument_overtones,
-                    separate_drums=self.separate_drums
-                )
-                if piano_roll is not None:
-                    piano_rolls.append(piano_roll)
-
-            if len(piano_rolls) == 0:
-                print(f"Warning: No valid piano rolls for {midi_path}")
-                return None
-
-            # Stack and merge piano rolls
-            actual_length = max(pr.shape[-1] for pr in piano_rolls)
-            for i, pr in enumerate(piano_rolls):
-                piano_rolls[i] = torch.nn.functional.pad(
-                    torch.tensor(pr),
-                    (0, actual_length - pr.shape[-1])
-                )
-
-            piano_roll = torch.stack(piano_rolls).sum(dim=0).clamp(0, 127)
-            piano_roll = piano_roll.float() / 127.0  # Normalize to [0, 1]
-
-            # Adjust time signature tick positions for target ticks per beat
-            adjusted_time_signatures = [
-                (int(round(tick_pos * self.target_ticks_per_beat / ticks_per_beat)), numerator, denominator)
-                for tick_pos, numerator, denominator in time_signatures
-            ]
-
-            return {
-                "piano_roll": piano_roll,
-                "time_signatures": adjusted_time_signatures
-            }
-
-        except Exception as e:
-            print(f"Error computing piano roll for {file_id}: {e}")
-            return None
+        return self.parse_and_create_piano_roll(midi_path)
 
     def _precompute_piano_roll_cache(self):
         """Precompute and cache all piano rolls."""
@@ -267,7 +195,7 @@ class TCNMidiDataset(Dataset):
                 torch.save(result, cache_path)
 
         if self.transpose_augmentation:
-            piano_roll = transpose_augmentation(piano_roll)
+            piano_roll = self.apply_transpose_augmentation(piano_roll)
 
         # Cut silence from beginning
         # print(f"Piano roll shape before trimming: {piano_roll.shape}")
