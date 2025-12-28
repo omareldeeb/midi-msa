@@ -248,7 +248,7 @@ class TCN(nn.Module):
             function_outputs=function_outputs
         )
 
-    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.01) -> Tuple[np.ndarray, np.ndarray]:
         measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
         pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
         pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()

@@ -219,78 +219,100 @@ def random_take(one_in_n: int) -> bool:
     return (torch.randint(0, one_in_n, ()) < 1).bool().item() # type: ignore
 
 
+def get_piano_roll_cache_path(file_id: str, piano_roll_dir: Optional[Path], target_ticks_per_beat: int, instrument_overtones: bool, separate_drums: bool) -> Optional[Path]:
+    """Get the cache path for a piano roll file."""
+    if not piano_roll_dir:
+        return None
+
+    # Create a unique filename based on file_id and piano roll parameters
+    cache_filename = (
+        f"{file_id}_tpb{target_ticks_per_beat}"
+        f"_ot{int(instrument_overtones)}"
+        f"_sd{int(separate_drums)}.pt"
+    )
+    return piano_roll_dir / cache_filename
+
+
+def get_sslm_cache_path(file_id: str, sslms_dir: Optional[Path], target_ticks_per_beat: int) -> Optional[Path]:
+    """Get the cache path for an SSLM file."""
+    if not sslms_dir:
+        return None
+
+    cache_filename = f"{file_id}_sslm_tp{target_ticks_per_beat}.pt"
+    return sslms_dir / cache_filename
+
 def create_lakh_dataset(
     lakh_midi_dir: Union[Path, str],
     data_dir: Union[Path, str],
     files_dict: Dict[str, List[str]],
-    markers_qn_path: Union[Path, str],
+    markers_qn_path: Optional[Union[Path, str]] = None,
     annotation_dir: Optional[Union[Path, str]] = None,
     target_ticks_per_beat: int = 4,
     instrument_overtones: bool = True,
     separate_drums: bool = True,
     compute_sslm_near: bool = False,
-    compute_sslm_far: bool = False
+    compute_sslm_far: bool = False,
+    measures_qn_path: Optional[Union[Path, str]] = None,
 ):
     """
     Loads MIDI files from the Lakh MIDI dataset, processes them into piano rolls,
     and saves them in a structured directory format for training, validation, and testing.
-    The dataset is split into training, validation, and test sets based on the provided good files.
-    The processed data is saved in PyTorch tensor format.
-    The directory structure is as follows:
-    - DATA_DIR/
-        - tubb_train/
-        - non_tubb_train/
-        - tubb_val/
-        - non_tubb_val/
-        - tubb_test/
-        - non_tubb_test/
+
+    Supports two data formats:
+
+    OLD FORMAT (markers_qn_path provided):
+        - Boundaries from markers_qn.json
+        - Optional labels from annotation_dir
+
+    NEW FORMAT (annotation_dir without markers_qn_path):
+        - Boundaries AND labels from {FILE_ID}_labels_coarse_qn.json
+
+    Args:
+        lakh_midi_dir: Directory containing MIDI files
+        data_dir: Output directory for processed data
+        files_dict: Dict mapping split names to file IDs
+        markers_qn_path: Path to markers_qn.json (old format, optional)
+        annotation_dir: Directory with per-file annotation JSONs (new format)
+        measures_qn_path: Path to measures_qn.json (optional, for beat/downbeat)
     """
     if isinstance(data_dir, str):
         data_dir = Path(data_dir)
     if isinstance(lakh_midi_dir, str):
         lakh_midi_dir = Path(lakh_midi_dir)
+    if annotation_dir and isinstance(annotation_dir, str):
+        annotation_dir = Path(annotation_dir)
+
+    # Determine format: old (with tubb/non_tubb) or new (simple split)
+    use_old_format = markers_qn_path is not None
+
+    if not markers_qn_path and not annotation_dir:
+        raise ValueError("Must provide either markers_qn_path (old format) or annotation_dir (new format)")
 
     if not data_dir.exists():
-        data_dir.mkdir()
+        data_dir.mkdir(parents=True)
 
-    Path(data_dir / "tubb_train").mkdir(exist_ok=True)
-    Path(data_dir / "non_tubb_train").mkdir(exist_ok=True)
-    Path(data_dir / "tubb_val").mkdir(exist_ok=True)
-    Path(data_dir / "non_tubb_val").mkdir(exist_ok=True)
-    Path(data_dir / "tubb_test").mkdir(exist_ok=True)
-    Path(data_dir / "non_tubb_test").mkdir(exist_ok=True)
+    for split in files_dict.keys():
+        (data_dir / split).mkdir(exist_ok=True)
+        (data_dir / split / Path("metadata")).mkdir(exist_ok=True)
+        (data_dir / split / Path("piano_rolls")).mkdir(exist_ok=True)
+        if compute_sslm_near or compute_sslm_far:
+            (data_dir / split / Path("sslms")).mkdir(exist_ok=True)
 
-    measure_qns_all = json.load(open("../data/measures_qn.json"))
+
+    # Load measure data if available
+    measure_qns_all = None
+    if measures_qn_path:
+        with open(measures_qn_path, "r") as f:
+            measure_qns_all = json.load(f)
     for key in files_dict:
         print(f"Processing files: {key}")
-        for test_example in tqdm(files_dict[key], desc="Loading test examples"):
-            save_path = data_dir / Path(key) / Path(f"{test_example}.pt")
-            if save_path.exists():
-                # See if saved data contains segment labels if annotation_dir is provided else add segment labels
-                if annotation_dir is not None:
-                    data = torch.load(save_path)
-                    if "segment_labels" in data:
-                        continue
-                    else:
-                        annotation_path = Path(annotation_dir) / f"{test_example}_labels_coarse_qn.json"
-                        if annotation_path.exists():
-                            with open(annotation_path, "r") as f:
-                                annotations = json.load(f)
-
-                            # Preprocess labels
-                            processed_annotations = preprocess_labels(annotations)
-
-                            # Convert to ticks
-                            segment_labels = []
-                            for qn, label in processed_annotations:
-                                segment_labels.append(label)
-
-                            # Store labels corresponding to segment boundaries
-                            data["segment_labels"] = segment_labels
-                            torch.save(data, save_path)
+        for test_example in tqdm(files_dict[key], desc="Loading examples"):
+            metadata_path = data_dir / Path(key) / Path("metadata") /  Path(f"{test_example}.pt")
+            piano_roll_path = get_piano_roll_cache_path(test_example, data_dir / Path(key) / Path("piano_rolls"), target_ticks_per_beat, instrument_overtones, separate_drums)
+            if metadata_path.exists() and piano_roll_path and piano_roll_path.exists():
+                # Skip already processed files
                 continue
 
-            measure_qns = measure_qns_all[test_example]
             midi_path = lakh_midi_dir / Path(f"{test_example[0]}") / Path(test_example + ".mid")
             if not midi_path.exists():
                 print(f"Missing MIDI file: {midi_path}")
@@ -299,23 +321,57 @@ def create_lakh_dataset(
             # MIDI
             try:
                 track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
-                markers_ticks = parse_markers(
-                    markers_qn_path=markers_qn_path,
-                    file_id=test_example,
-                    ticks_per_beat=ticks_per_beat
-                )
             except Exception as e:
                 print(f"Error loading MIDI file: {midi_path}")
                 print(e)
                 continue
 
-            # Annotation
-            if ticks_per_beat > target_ticks_per_beat:
+            # Load boundaries and labels based on format
+            if use_old_format:
+                # Old format: boundaries from markers_qn.json
+                try:
+                    markers_ticks = parse_markers(
+                        markers_qn_path=markers_qn_path,
+                        file_id=test_example,
+                        ticks_per_beat=ticks_per_beat
+                    )
+                except Exception as e:
+                    print(f"Error parsing markers for {test_example}: {e}")
+                    continue
+
+                # Convert to target resolution
                 markers_ticks = [int(round(marker * target_ticks_per_beat / ticks_per_beat)) for marker in markers_ticks]
+                segment_labels = None
+            else:
+                # New format: boundaries and labels from annotation file
+                assert annotation_dir is not None, "annotation_dir required for new format"
+                annotation_path = annotation_dir / Path(f"{test_example}_labels_coarse_qn.json")
+                if not annotation_path.exists():
+                    print(f"Missing annotation file: {annotation_path}")
+                    continue
+
+                try:
+                    with open(annotation_path, "r") as f:
+                        annotations = json.load(f)
+                    processed_annotations = preprocess_labels(annotations)
+
+                    # Extract boundaries (in quarter notes) and labels together
+                    segment_qns = [ann[0] for ann in processed_annotations]
+                    segment_labels = [ann[1] for ann in processed_annotations]
+
+                    # Convert quarter notes to ticks
+                    markers_ticks = [int(round(qn * target_ticks_per_beat)) for qn in segment_qns]
+                except Exception as e:
+                    print(f"Error processing annotations for {test_example}: {e}")
+                    continue
+
+            # Load measure boundaries if available
+            measure_ticks = None
+            if measure_qns_all and test_example in measure_qns_all:
+                measure_qns = measure_qns_all[test_example]
                 measure_ticks = [int(round(qn * target_ticks_per_beat)) for qn in measure_qns]
             else:
-                print(f"Skipping {test_example} due to downsample factor")
-                continue
+                print(f"No measure data for {test_example}")
 
             piano_rolls = []
             # drum_piano_roll = None  # Separate channel
@@ -344,40 +400,45 @@ def create_lakh_dataset(
             piano_roll = torch.stack(piano_rolls)
             # Merge channels
             piano_roll = piano_roll.sum(dim=0).clamp(0, 127)
+            torch.save(piano_roll, str(piano_roll_path))
 
             data = {
-                "piano_roll": piano_roll,
                 "segment_boundaries": markers_ticks,
-                "measure_ticks": measure_ticks
             }
 
-            # Load and process segment labels if annotation_dir is provided
-            if annotation_dir is not None:
-                annotation_path = Path(annotation_dir) / f"{test_example}_labels_coarse_qn.json"
+            # Add measure ticks if available
+            if measure_ticks is not None:
+                data["measure_ticks"] = measure_ticks
+
+            # Add segment labels if available
+            if segment_labels is not None:
+                data["segment_labels"] = segment_labels
+            elif use_old_format and annotation_dir:
+                # Old format with annotation_dir: optionally add labels from annotations
+                # WARNING: boundaries from markers_qn.json may not match annotation boundaries!
+                annotation_path = annotation_dir / f"{test_example}_labels_coarse_qn.json"
                 if annotation_path.exists():
                     with open(annotation_path, "r") as f:
                         annotations = json.load(f)
-
-                    # Preprocess labels
                     processed_annotations = preprocess_labels(annotations)
-
-                    # Convert to ticks
-                    segment_labels = []
-                    for qn, label in processed_annotations:
-                        segment_labels.append(label)
-
-                    # Store labels corresponding to segment boundaries
-                    data["segment_labels"] = segment_labels
-
+                    data["segment_labels"] = [label for _, label in processed_annotations]
+            
+            sslm_data = dict()
             if compute_sslm_near:
-                sslm_near, _ = compute_sslms(piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
-                data["sslm_near"] = sslm_near
+                sslm_piano_roll = piano_roll.sum(dim=0)
+                sslm_near, _ = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
+                sslm_data["sslm_near"] = sslm_near
 
             if compute_sslm_far:
-                _, sslm_far = compute_sslms(piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
-                data["sslm_far"] = sslm_far
+                sslm_piano_roll = piano_roll.sum(dim=0)
+                _, sslm_far = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
+                sslm_data["sslm_far"] = sslm_far
+            
+            if sslm_data:
+                sslm_path = get_sslm_cache_path(test_example, data_dir / Path(key) / Path("sslms"), target_ticks_per_beat)
+                torch.save(sslm_data, str(sslm_path))
 
-            torch.save(data, save_path)
+            torch.save(data, str(metadata_path))
 
 
 _sslms_near = dict()
@@ -394,19 +455,44 @@ def get_piano_roll_patches(
     """
     Load piano rolls from the specified paths, process them, and return a PatchData object
     containing piano rolls, patch metadata, and optionally SSLM patches.
-    Handles positive oversampling and negative undersampling and pads the piano rolls if specified.
+
+    Supports both old format (tubb/non_tubb structure) and new format (simple train/val/test).
     """
     if isinstance(data_dir, str):
         data_dir = Path(data_dir)
 
-    # Paths defined above in create_lakh_dataset()
-    piano_roll_paths = \
-        [path for path in (data_dir / "tubb_train").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")] + \
-        [path for path in (data_dir / "non_tubb_train").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")] + \
-        [path for path in (data_dir / "tubb_val").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")] + \
-        [path for path in (data_dir / "non_tubb_val").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")] + \
-        [path for path in (data_dir / "tubb_test").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")] + \
-        [path for path in (data_dir / "non_tubb_test").iterdir() if path.suffix == ".pt" and not path.name.startswith(".")]
+    # Detect directory structure
+    piano_roll_paths = []
+    metadata_paths = dict()
+    sslm_paths = dict()
+    for subdir in data_dir.iterdir():
+        if subdir.is_dir():
+            piano_roll_dir = subdir / "piano_rolls"
+            if piano_roll_dir.exists():
+                piano_roll_paths.extend([
+                    path for path in piano_roll_dir.iterdir()
+                    if path.suffix == ".pt" and not path.name.startswith(".")
+                ])
+            else:
+                # Assume simple structure
+                piano_roll_paths.extend([
+                    path for path in subdir.iterdir()
+                    if path.suffix == ".pt" and not path.name.startswith(".")
+                ])
+            
+            metadata_dir = subdir / "metadata"
+            if metadata_dir.exists():
+                # add metadata_path.stem: metadata_path
+                for path in metadata_dir.iterdir():
+                    if path.suffix == ".pt" and not path.name.startswith("."):
+                        metadata_paths[path.stem] = path
+            
+            sslm_dir = subdir / "sslms"
+            if sslm_dir.exists():
+                for path in sslm_dir.iterdir():
+                    if path.suffix == ".pt" and not path.name.startswith("."):
+                        file_id = path.stem.split("_")[0]
+                        sslm_paths[file_id] = path
 
     padding = window_half_ticks
 
@@ -418,20 +504,34 @@ def get_piano_roll_patches(
     piano_roll_idx = 0
 
     for piano_roll_path in tqdm(piano_roll_paths, desc="Loading inputs and labels"):
+        file_id = str(piano_roll_path.stem).split("_")[0]
+        metadata_path = metadata_paths.get(file_id, None)
+        if metadata_path is None:
+            print(f"Missing metadata for {piano_roll_path.stem}, skipping.")
+            continue
+        metadata = torch.load(metadata_path)
+
         try:
-            data = torch.load(piano_roll_path)
+            piano_roll = torch.load(piano_roll_path)
         except RuntimeError:
             print(f"Error loading {piano_roll_path}")
             continue
+
+        sslm_path = sslm_paths.get(file_id, None)
+        if sslm_path:
+            sslm_data = torch.load(sslm_path)
+            if return_sslm_near and "sslm_near" in sslm_data:
+                _sslms_near[piano_roll_idx] = sslm_data["sslm_near"]
+            if return_sslm_far and "sslm_far" in sslm_data:
+                _sslms_far[piano_roll_idx] = sslm_data["sslm_far"]
 
         # Don't oversample/undersample in validation/test sets
         positive_oversampling_factor = positive_oversampling_factor if 'train' in str(piano_roll_path) else 1
         negative_undersampling_factor = negative_undersampling_factor if 'train' in str(piano_roll_path) else 1
 
-        piano_roll = data["piano_roll"]
-        segment_boundaries = torch.tensor(data["segment_boundaries"])
-        measure_boundaries = torch.tensor(data["measure_ticks"])
-        segment_labels = data.get("segment_labels", None)
+        segment_boundaries = torch.tensor(metadata["segment_boundaries"])
+        measure_boundaries = torch.tensor(metadata["measure_ticks"])
+        segment_labels = metadata.get("segment_labels", None)
 
         # Compute first and last nonzero columns of the first channel (first and last onset, respectively)
         if piano_roll.dim() == 4:
@@ -483,28 +583,31 @@ def get_piano_roll_patches(
         # TODO: SSLMs should be precomputed and saved like the piano rolls
         if return_sslm_near:
             # Check if precomputed, otherwise load from file or compute
-            if "sslm_near" in data:
-                sslm_near = data["sslm_near"]
-            elif piano_roll_idx in _sslms_near:
+            if piano_roll_idx in _sslms_near:
                 sslm_near = _sslms_near[piano_roll_idx]
             else:
                 sslm_piano_roll = piano_roll.sum(dim=0, keepdim=False)
                 sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=704)  # 88s <=> L=704
                 _sslms_near[piano_roll_idx] = sslm_near
                 _sslms_far[piano_roll_idx] = sslm_far
-                sslms_near.append(sslm_near)
-                sslms_far.append(sslm_far)
+            
+            sslm_near = sslm_near[..., first_nonzero_column:last_nonzero_column + 1]
+            if pad_boundary_patches:
+                sslm_near = F.pad(sslm_near, (padding, padding), mode='constant', value=0)
+            sslms_near.append(sslm_near)
         
         if return_sslm_far:
-            if "sslm_far" in data:
-                sslm_far = data["sslm_far"]
-            elif piano_roll_idx in _sslms_far:
+            if piano_roll_idx in _sslms_far:
                 sslm_far = _sslms_far[piano_roll_idx]
             else:
                 sslm_piano_roll = piano_roll.sum(dim=0, keepdim=False)
                 _, sslm_far = compute_sslms(sslm_piano_roll, L=704)  # 88s <=> L=704
                 _sslms_far[piano_roll_idx] = sslm_far
-                sslms_far.append(sslm_far)
+            
+            sslm_far = sslm_far[..., first_nonzero_column:last_nonzero_column + 1]
+            if pad_boundary_patches:
+                sslm_far = F.pad(sslm_far, (padding, padding), mode='constant', value=0)
+            sslms_far.append(sslm_far)
 
         for i in measure_boundaries:
             if not pad_boundary_patches and (i - padding <= 0 or i + padding >= piano_roll.shape[-1]):
@@ -524,7 +627,7 @@ def get_piano_roll_patches(
                 "piano_roll_idx": piano_roll_idx,
                 "patch_idx": i,
                 "is_segment_boundary": is_segment_boundary,
-                "key": piano_roll_path.parent.stem, # non_tubb_train, non_tubb_val, tubb_train, tubb_val
+                "key": piano_roll_path.parent.parent.stem, # non_tubb_train, non_tubb_val, tubb_train, tubb_val
 
                 # New: nearest segment boundary
                 "nearest_segment_boundary": nearest_segment_boundary
@@ -580,7 +683,7 @@ def compute_sslms(piano_roll: torch.Tensor, L: int = 720) -> Tuple[torch.Tensor,
     """
 
     X = torch.as_tensor(piano_roll.squeeze(), dtype=torch.float32)  # expected shape [F, T]
-    assert X.dim() == 2, "input_spectrogram must be [F, T]"
+    assert X.dim() == 2, f"input_spectrogram must be [F, T], got {X.shape}"
 
     p = 4 # no downsampling for now
     C = 2 # context frames on each side
@@ -676,21 +779,3 @@ def widen_temporal_events(events, num_neighbors=2):
     widen_events[neighbor_indices] *= 0.5
   
   return widen_events
-
-class SegmentFunction(str, Enum):
-    # TODO
-    pass
-
-# Mapping from raw labels to consolidated enum categories
-LABEL_MAP = {
-    # TODO
-}
-
-def consolidate_segment_labels(segment_labels: List[str]) -> List[SegmentFunction]:
-    def convert(label: str) -> SegmentFunction:
-        key = label.lower()
-        if key == "unknown":
-            print("consolidate_segment_labels: warning: converting 'unknown' label to SILENCE")
-        return LABEL_MAP.get(key, SegmentFunction.OTHER)
-
-    return [convert(label) for label in segment_labels]

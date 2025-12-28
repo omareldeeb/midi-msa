@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 from .base_dataset import BaseMidiDataset
-from .utils import widen_temporal_events, compute_sslms
+from .utils import widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path
 from .label_preprocessor import preprocess_labels
 
 
@@ -90,27 +90,6 @@ class TCNMidiDataset(BaseMidiDataset):
         if self.piano_roll_dir:
             self._precompute_piano_roll_cache()
 
-    def _get_piano_roll_cache_path(self, file_id: str) -> Optional[Path]:
-        """Get the cache path for a piano roll file."""
-        if not self.piano_roll_dir:
-            return None
-
-        # Create a unique filename based on file_id and piano roll parameters
-        cache_filename = (
-            f"{file_id}_tpb{self.target_ticks_per_beat}"
-            f"_ot{int(self.instrument_overtones)}"
-            f"_sd{int(self.separate_drums)}.pt"
-        )
-        return self.piano_roll_dir / cache_filename
-    
-    def _get_sslm_cache_path(self, file_id: str) -> Optional[Path]:
-        """Get the cache path for an SSLM file."""
-        if not self.sslms_dir:
-            return None
-
-        cache_filename = f"{file_id}_sslm_tp{self.target_ticks_per_beat}.pt"
-        return self.sslms_dir / cache_filename
-
     def _compute_piano_roll(self, file_id: str) -> Optional[Dict]:
         """Compute piano roll using base class method."""
         midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
@@ -124,7 +103,7 @@ class TCNMidiDataset(BaseMidiDataset):
         # Check which files need to be cached
         files_to_cache = []
         for file_id in self.midi_file_ids:
-            cache_path = self._get_piano_roll_cache_path(file_id)
+            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
             if cache_path and not cache_path.exists():
                 files_to_cache.append(file_id)
 
@@ -134,7 +113,7 @@ class TCNMidiDataset(BaseMidiDataset):
 
         print(f"Caching {len(files_to_cache)} piano rolls...")
         for file_id in tqdm(files_to_cache, desc="Caching piano rolls"):
-            cache_path = self._get_piano_roll_cache_path(file_id)
+            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
             if not cache_path or cache_path.exists():
                 continue
 
@@ -175,7 +154,7 @@ class TCNMidiDataset(BaseMidiDataset):
         annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
 
         # Check for cached piano roll
-        cache_path = self._get_piano_roll_cache_path(file_id)
+        cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
         if cache_path and cache_path.exists():
             # Load cached piano roll
             cached_data = torch.load(cache_path)
@@ -217,7 +196,7 @@ class TCNMidiDataset(BaseMidiDataset):
         sample = {"piano_roll": piano_roll}
 
         if self.compute_sslms:
-            sslm_cache_path = self._get_sslm_cache_path(file_id)
+            sslm_cache_path = get_sslm_cache_path(file_id, self.sslms_dir, self.target_ticks_per_beat)
             if sslm_cache_path and sslm_cache_path.exists():
                 sslm_data = torch.load(sslm_cache_path)
                 sslm_near = sslm_data["sslm_near"]

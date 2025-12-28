@@ -1,6 +1,8 @@
 # @package _global_
 method: usg
 
+data_dir: /Volumes/ExtremePro/data_dir  # Must be specified
+
 # USG-specific data parameters
 window_half_ticks: 256
 positive_oversampling_factor: 2
@@ -14,9 +16,16 @@ output_features: 64
 num_targets: 1
 
 # SSLM features
-use_sslm_near: false
-use_sslm_far: false
+use_sslm_near: true
+use_sslm_far: true
 
 # Multi-task learning
 predict_segment_label: false
 segment_label_loss_weight: 1.0
+
+# Data format (for auto-creation if data_dir doesn't exist)
+# OLD FORMAT: requires split_file, markers_qn_path, measures_qn_path
+# NEW FORMAT: requires split_file, annotation_dir only
+split_file: /Users/omar/Downloads/cv_split_files/cv_split_0.json  # JSON with file splits e.g., {"train": [...], "val": [...], "test": [...]}
+markers_qn_path: null  # Old format only: markers_qn.json path
+measures_qn_path: /Users/omar/Documents/Projects/midi-msa/slms_metadata/measures_qn.json  # Optional: measures_qn.json path

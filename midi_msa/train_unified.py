@@ -19,7 +19,10 @@ Usage:
     python train_unified.py wandb.enabled=true wandb.project=my-project
 """
 
+import random
+
 import hydra
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import torch
 
@@ -28,7 +31,7 @@ from midi_msa.models.registry import build_model
 from midi_msa.training import build_trainer
 
 
-@hydra.main(version_base=None, config_path="config", config_name="config")
+@hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig):
     print("=" * 80)
     print("MIDI Music Structure Analysis - Unified Training Pipeline")
@@ -41,9 +44,20 @@ def main(cfg: DictConfig):
         torch.manual_seed(cfg.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(cfg.seed)
+        np.random.seed(cfg.seed)
+        random.seed(cfg.seed)
+        print(f"Set random seed to {cfg.seed}\n")
 
     # Setup device
-    device = torch.device(cfg.device)
+    device = torch.device("cpu")
+    if cfg.device == "auto":
+        # cuda > mps > cpu
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps") 
+    else:
+        device = torch.device(cfg.device)
     print(f"Using device: {device}\n")
 
     # Build model

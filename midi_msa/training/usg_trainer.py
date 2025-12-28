@@ -9,7 +9,7 @@ from .base_trainer import BaseTrainer
 from ..data.piano_roll_dataset import PianoRollDataset
 from ..data.utils import get_piano_roll_patches
 from ..evaluation.metrics import compute_metrics
-from ..models.mobilenet_boundary_classifier import SEGMENT_LABEL_VOCAB
+from ..data.label_preprocessor import LABEL_MAP
 
 
 class USGTrainer(BaseTrainer):
@@ -28,7 +28,46 @@ class USGTrainer(BaseTrainer):
 
     def get_dataloaders(self) -> Tuple:
         """Create dataloaders for USG training."""
-        segment_vocab = SEGMENT_LABEL_VOCAB if self.cfg.predict_segment_label else None
+        from pathlib import Path
+        import json
+        from ..data.utils import create_lakh_dataset
+
+        segment_vocab = sorted(list(set(LABEL_MAP.values())))
+
+        # Check if data_dir exists, if not, create dataset
+        data_dir = Path(self.cfg.data_dir)
+        if not data_dir.exists():
+            print(f"Data directory {data_dir} does not exist. Creating dataset...")
+
+            if not self.cfg.split_file:
+                raise ValueError(
+                    "split_file must be provided to auto-create dataset. "
+                    "Example: split_file=/path/to/splits.json with format "
+                    '{"train": [...], "val": [...], "test": [...]}'
+                )
+
+            if not self.cfg.midi_dir:
+                raise ValueError("midi_dir must be provided to auto-create dataset")
+
+            # Load split file
+            with open(self.cfg.split_file, "r") as f:
+                files_dict = json.load(f)
+
+            # Call create_lakh_dataset
+            create_lakh_dataset(
+                lakh_midi_dir=self.cfg.midi_dir,
+                data_dir=self.cfg.data_dir,
+                files_dict=files_dict,
+                markers_qn_path=self.cfg.markers_qn_path,
+                annotation_dir=self.cfg.annotation_dir,
+                target_ticks_per_beat=self.cfg.target_ticks_per_beat,
+                instrument_overtones=self.cfg.instrument_overtones,
+                separate_drums=self.cfg.separate_drums,
+                compute_sslm_near=self.cfg.use_sslm_near,
+                compute_sslm_far=self.cfg.use_sslm_far,
+                measures_qn_path=self.cfg.measures_qn_path,
+            )
+            print(f"Dataset created successfully at {data_dir}")
 
         # Load patches
         patch_data = get_piano_roll_patches(
@@ -104,16 +143,20 @@ class USGTrainer(BaseTrainer):
             dataset_val_non_tubb, batch_size=self.cfg.batch_size, shuffle=False
         )
 
-        return train_loader, (val_loader_tubb, val_loader_non_tubb)
+        # Return val loaders as iterable of (name, dataloader) tuples
+        val_loaders = [("tubb", val_loader_tubb), ("non_tubb", val_loader_non_tubb)]
+
+        return train_loader, val_loaders
 
     def train_epoch(self, train_loader) -> Dict[str, float]:
         """Train for one epoch."""
         self.model.train()
         total_loss = 0.0
 
-        for batch in tqdm(train_loader, desc="Training"):
+        pbar = tqdm(train_loader, desc="Training")
+        for batch_idx, batch in (enumerate(pbar)):
             batch = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                k: v.to(torch.float32).to(self.device) if isinstance(v, torch.Tensor) else v
                 for k, v in batch.items()
             }
 
@@ -140,116 +183,101 @@ class USGTrainer(BaseTrainer):
 
             total_loss += loss.item()
 
+            # update progress bar with current loss and average loss
+            pbar.set_postfix({
+                "batch_loss": loss.item(),
+                "avg_loss": total_loss / (batch_idx + 1)
+            })
+
         avg_loss = total_loss / len(train_loader)
         return {"loss": avg_loss}
 
     def validate_epoch(self, val_loaders) -> Dict[str, float]:
-        """Validate on both tubb and non-tubb sets."""
+        """Validate on all validation loaders.
+
+        Args:
+            val_loaders: Iterable of (name, dataloader) tuples or dict mapping names to dataloaders.
+        """
         self.model.eval()
 
-        val_loader_tubb, val_loader_non_tubb = val_loaders
+        # Support both dict and iterable of tuples
+        if isinstance(val_loaders, dict):
+            val_loaders = val_loaders.items()
 
-        # Validate on tubb
-        val_outputs_tubb, val_targets_tubb = [], []
-        val_loss_tubb = 0.0
+        all_metrics = {}
+        all_losses = []
+        all_f1s = []
 
-        with torch.no_grad():
-            for batch in val_loader_tubb:
-                batch = {
-                    k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()
-                }
+        for loader_name, val_loader in val_loaders:
+            if len(val_loader) == 0:
+                continue  # Skip empty loaders
+            val_outputs, val_targets = [], []
+            total_loss = 0.0
 
-                output = self.model(
-                    batch["piano_roll_patch"],
-                    batch.get("sslm_near_patch"),
-                    batch.get("sslm_far_patch"),
-                )
+            pbar = tqdm(val_loader, desc=f"Validating ({loader_name})")
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(pbar):
+                    batch = {
+                        k: v.to(torch.float32).to(self.device) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items()
+                    }
 
-                boundary_loss = self.boundary_criterion(
-                    output["boundary_logits"], batch["targets"].float()
-                )
-                loss = boundary_loss
-
-                if "segment_label_logits" in output and "segment_label_target" in batch:
-                    segment_loss = self.segment_criterion(
-                        output["segment_label_logits"], batch["segment_label_target"]
+                    output = self.model(
+                        batch["piano_roll_patch"],
+                        batch.get("sslm_near_patch"),
+                        batch.get("sslm_far_patch"),
                     )
-                    loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
-                val_outputs_tubb.append(output["boundary_logits"])
-                val_targets_tubb.append(batch["targets"])
-                val_loss_tubb += loss.item()
-
-        # Validate on non-tubb
-        val_outputs_non_tubb, val_targets_non_tubb = [], []
-        val_loss_non_tubb = 0.0
-
-        with torch.no_grad():
-            for batch in val_loader_non_tubb:
-                batch = {
-                    k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()
-                }
-
-                output = self.model(
-                    batch["piano_roll_patch"],
-                    batch.get("sslm_near_patch"),
-                    batch.get("sslm_far_patch"),
-                )
-
-                boundary_loss = self.boundary_criterion(
-                    output["boundary_logits"], batch["targets"].float()
-                )
-                loss = boundary_loss
-
-                if "segment_label_logits" in output and "segment_label_target" in batch:
-                    segment_loss = self.segment_criterion(
-                        output["segment_label_logits"], batch["segment_label_target"]
+                    boundary_loss = self.boundary_criterion(
+                        output["boundary_logits"], batch["targets"].float()
                     )
-                    loss = loss + self.cfg.segment_label_loss_weight * segment_loss
+                    loss = boundary_loss
 
-                val_outputs_non_tubb.append(output["boundary_logits"])
-                val_targets_non_tubb.append(batch["targets"])
-                val_loss_non_tubb += loss.item()
+                    if "segment_label_logits" in output and "segment_label_target" in batch:
+                        segment_loss = self.segment_criterion(
+                            output["segment_label_logits"], batch["segment_label_target"]
+                        )
+                        loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
-        # Compute metrics
-        metrics_tubb = compute_metrics(
-            torch.cat(val_outputs_tubb), torch.cat(val_targets_tubb)
-        )
-        metrics_non_tubb = compute_metrics(
-            torch.cat(val_outputs_non_tubb), torch.cat(val_targets_non_tubb)
-        )
+                    val_outputs.append(output["boundary_logits"])
+                    val_targets.append(batch["targets"])
+                    total_loss += loss.item()
 
-        val_loss_tubb /= len(val_loader_tubb)
-        val_loss_non_tubb /= len(val_loader_non_tubb)
+                    # Update progress bar with current and average loss
+                    avg_loss = total_loss / (batch_idx + 1)
+                    pbar.set_postfix({
+                        "batch_loss": loss.item(),
+                        "avg_loss": avg_loss
+                    })
 
-        # Compute F1
-        f1_tubb = (
-            2
-            * metrics_tubb["precision_0"]
-            * metrics_tubb["recall_0"]
-            / (metrics_tubb["precision_0"] + metrics_tubb["recall_0"] + 1e-8)
-        )
-        f1_non_tubb = (
-            2
-            * metrics_non_tubb["precision_0"]
-            * metrics_non_tubb["recall_0"]
-            / (metrics_non_tubb["precision_0"] + metrics_non_tubb["recall_0"] + 1e-8)
-        )
+            # Compute metrics for this loader
+            avg_loss = total_loss / len(val_loader)
+            metrics = compute_metrics(
+                torch.sigmoid(torch.cat(val_outputs)), torch.cat(val_targets)
+            )
 
-        return {
-            "loss": (val_loss_tubb + val_loss_non_tubb) / 2,
-            "loss_tubb": val_loss_tubb,
-            "loss_non_tubb": val_loss_non_tubb,
-            "f1_tubb": f1_tubb,
-            "f1_non_tubb": f1_non_tubb,
-            "f1_avg": (f1_tubb + f1_non_tubb) / 2,
-            "precision_tubb": metrics_tubb["precision_0"],
-            "precision_non_tubb": metrics_non_tubb["precision_0"],
-            "recall_tubb": metrics_tubb["recall_0"],
-            "recall_non_tubb": metrics_non_tubb["recall_0"],
-        }
+            # Compute F1
+            f1 = (
+                2
+                * metrics["precision_0"]
+                * metrics["recall_0"]
+                / (metrics["precision_0"] + metrics["recall_0"] + 1e-8)
+            )
+
+            # Store metrics with loader name prefix
+            all_metrics[f"loss_{loader_name}"] = avg_loss
+            all_metrics[f"f1_{loader_name}"] = f1
+            all_metrics[f"precision_{loader_name}"] = metrics["precision_0"]
+            all_metrics[f"recall_{loader_name}"] = metrics["recall_0"]
+
+            all_losses.append(avg_loss)
+            all_f1s.append(f1)
+
+        # Compute aggregate metrics
+        all_metrics["loss"] = sum(all_losses) / len(all_losses)
+        all_metrics["f1_avg"] = sum(all_f1s) / len(all_f1s)
+
+        return all_metrics
 
     def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
         """Use average loss for early stopping."""

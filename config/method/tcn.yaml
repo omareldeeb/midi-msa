@@ -2,8 +2,8 @@
 method: tcn
 
 # TCN-specific paths
-piano_roll_dir: ???  # Cache directory for piano rolls
-sslm_dir: null  # Optional cache for SSLMs
+piano_roll_dir: /Volumes/ExtremePro/piano_roll_dir  # Cache directory for piano rolls
+sslm_dir: /Volumes/ExtremePro/sslm_dir  # Optional cache for SSLMs
 
 # TCN model parameters
 tcn_layers: 2

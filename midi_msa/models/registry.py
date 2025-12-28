@@ -1,8 +1,9 @@
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from .mobilenet_boundary_classifier import MobileNetBoundaryClassifier, SEGMENT_LABEL_VOCAB
+from .mobilenet_boundary_classifier import MobileNetBoundaryClassifier
 from .tcn import TCN
+from ..data.label_preprocessor import LABEL_MAP
 
 
 def build_model(cfg: DictConfig) -> nn.Module:
@@ -15,9 +16,10 @@ def build_model(cfg: DictConfig) -> nn.Module:
     Returns:
         Initialized model
     """
-    if cfg.method == "usg":
-        segment_vocab = SEGMENT_LABEL_VOCAB if cfg.predict_segment_label else None
+    # Build segment vocabulary from label map
+    segment_vocab = sorted(list(set(LABEL_MAP.values())))
 
+    if cfg.method == "usg":
         model = MobileNetBoundaryClassifier(
             num_targets=cfg.num_targets,
             pretrained=cfg.pretrained,
@@ -26,13 +28,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             output_features=cfg.output_features,
             segment_function_vocab=segment_vocab,
         )
-
     elif cfg.method == "tcn":
-        # Build segment vocabulary from label map
-        from ..data.label_preprocessor import LABEL_MAP
-
-        segment_vocab = sorted(list(set(LABEL_MAP.values())))
-
         model = TCN(
             input_channels=3,  # Piano roll channels
             conv_filters=cfg.conv_filters,
@@ -40,7 +36,6 @@ def build_model(cfg: DictConfig) -> nn.Module:
             tcn_kernel_size=cfg.tcn_kernel_size,
             segment_function_vocab=segment_vocab,
         )
-
     else:
         raise ValueError(f"Unknown method: {cfg.method}")
 

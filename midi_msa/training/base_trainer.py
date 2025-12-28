@@ -123,7 +123,7 @@ class BaseTrainer(ABC):
         pass
 
     @abstractmethod
-    def validate_epoch(self, val_loader) -> Dict[str, float]:
+    def validate_epoch(self, val_loaders) -> Dict[str, float]:
         """Validate for one epoch. Returns metrics dict."""
         pass
 
@@ -156,7 +156,7 @@ class BaseTrainer(ABC):
 
             # Save checkpoint
             checkpoint_path = (
-                self.cfg.checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+                Path(self.cfg.checkpoint_dir) / f"checkpoint_epoch_{epoch + 1}.pt"
             )
             self.save_checkpoint(checkpoint_path, is_best=improved)
 

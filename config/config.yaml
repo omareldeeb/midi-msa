@@ -1,11 +1,10 @@
 defaults:
-  - method: usg
+  - method: tcn
   - _self_
 
 # Data paths
-data_dir: ???  # Must be specified
-annotation_dir: null
-midi_dir: null
+annotation_dir: /Users/omar/Documents/Projects/midi-msa/slms_data/v1.1.1
+midi_dir: /Users/omar/Projects/ComposersAssistant/lmd_full
 
 # Piano roll parameters
 target_ticks_per_beat: 4
@@ -13,13 +12,13 @@ instrument_overtones: true
 separate_drums: true
 
 # Training parameters
-batch_size: 32
+batch_size: 1
 num_epochs: 50
 lr: 1e-3
 weight_decay: 1e-4
 
 # Device and paths
-device: null  # Auto-detect if null
+device: auto # "auto", "cpu", "cuda", or "mps"
 checkpoint_dir: checkpoints
 log_dir: runs
 

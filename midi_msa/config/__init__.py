@@ -17,7 +17,7 @@ class BaseConfig:
     method: str = "usg"
 
     # Data paths
-    data_dir: str = "???"
+    data_dir: Optional[str] = None
     annotation_dir: Optional[str] = None
     midi_dir: Optional[str] = None
 
@@ -73,6 +73,13 @@ class USGConfig(BaseConfig):
     # Multi-task learning
     predict_segment_label: bool = False
     segment_label_loss_weight: float = 1.0
+
+    # Data format parameters (for auto-creation)
+    split_file: Optional[str] = None
+    markers_qn_path: Optional[str] = None
+    measures_qn_path: Optional[str] = None
+    compute_sslm_near_dataset: bool = False
+    compute_sslm_far_dataset: bool = False
 
 
 @dataclass
