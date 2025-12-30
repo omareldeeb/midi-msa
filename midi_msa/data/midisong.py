@@ -61,7 +61,7 @@ import math
 import typing
 import statistics
 
-from midisong_containers import *
+from midi_msa.data.midisong_containers import *
 
 _WARNINGS_PRINTED = set()
 
