@@ -796,6 +796,7 @@ def create_lakh_dataset(
                 instrument_overtones=instrument_overtones,
                 separate_drums=separate_drums,
             )
+            piano_roll = torch.tensor(piano_roll, dtype=torch.float32)
             torch.save(piano_roll, str(piano_roll_path))
 
             data = {
