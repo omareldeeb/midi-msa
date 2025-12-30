@@ -734,7 +734,8 @@ def create_lakh_dataset(
 
             # MIDI
             try:
-                track_data, ticks_per_beat, time_signatures = parse_midi(midi_path)
+                midi = mido.MidiFile(midi_path, clip=True)
+                ticks_per_beat = midi.ticks_per_beat
             except Exception as e:
                 print(f"Error loading MIDI file: {midi_path}")
                 print(e)
@@ -787,33 +788,14 @@ def create_lakh_dataset(
             else:
                 print(f"No measure data for {test_example}")
 
-            piano_rolls = []
-            # drum_piano_roll = None  # Separate channel
-            for track_name, note_data in track_data.items():
-                piano_roll = create_piano_roll(
-                    note_data,
-                    ticks_per_beat,
-                    chroma=False,
-                    target_ticks_per_beat=target_ticks_per_beat,
-                    instrument_overtones=instrument_overtones,
-                    separate_drums=separate_drums
-                )
-                # Some tracks are empty
-                if piano_roll is None:
-                    continue
-                piano_rolls.append(piano_roll)
 
-            if len(piano_rolls) == 0:
-                print(f"Skipping {test_example} due to empty piano rolls")
-                continue
-
-            actual_length = max(piano_roll.shape[-1] for piano_roll in piano_rolls)
-            for i, piano_roll in enumerate(piano_rolls):
-                piano_rolls[i] = torch.nn.functional.pad(torch.tensor(piano_roll), (0, actual_length - piano_roll.shape[-1]))
-
-            piano_roll = torch.stack(piano_rolls)
-            # Merge channels
-            piano_roll = piano_roll.sum(dim=0).clamp(0, 127)
+            piano_roll = create_piano_roll_fast(
+                path_to_midi_file=midi_path,
+                chroma=False,
+                target_ticks_per_beat=target_ticks_per_beat,
+                instrument_overtones=instrument_overtones,
+                separate_drums=separate_drums,
+            )
             torch.save(piano_roll, str(piano_roll_path))
 
             data = {
