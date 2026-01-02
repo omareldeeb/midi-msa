@@ -274,7 +274,7 @@ def create_piano_roll_fast(path_to_midi_file,
         ])
     else:  # don't separate drums AND no instrument overtones
         return np.stack([
-            piano_roll[1],
+            piano_roll[1] + piano_roll[3],
             torch.zeros_like(piano_roll[1]),
             torch.zeros_like(piano_roll[1])
         ])
