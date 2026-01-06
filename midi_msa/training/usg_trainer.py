@@ -1,5 +1,7 @@
+import os
 from typing import Dict, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -7,7 +9,7 @@ from tqdm import tqdm
 
 from .base_trainer import BaseTrainer
 from ..data.piano_roll_dataset import PianoRollDataset
-from ..data.utils import get_piano_roll_patches
+from ..data.utils import get_piano_roll_patches, create_piano_roll_patch_data
 from ..evaluation.metrics import compute_metrics
 from ..data.label_preprocessor import LABEL_MAP
 
@@ -32,50 +34,41 @@ class USGTrainer(BaseTrainer):
         import json
         from ..data.utils import create_lakh_dataset
 
-        segment_vocab = sorted(list(set(LABEL_MAP.values())))
-
-        # Check if data_dir exists, if not, create dataset
-        data_dir = Path(self.cfg.data_dir)
-        if not data_dir.exists():
-            print(f"Data directory {data_dir} does not exist. Creating dataset...")
-
-            if not self.cfg.split_file:
-                raise ValueError(
-                    "split_file must be provided to auto-create dataset. "
-                    "Example: split_file=/path/to/splits.json with format "
-                    '{"train": [...], "val": [...], "test": [...]}'
-                )
-
-            if not self.cfg.midi_dir:
-                raise ValueError("midi_dir must be provided to auto-create dataset")
-
-            # Load split file
-            with open(self.cfg.split_file, "r") as f:
+        files_dict = None
+        if self.cfg.split_files and Path(self.cfg.split_files[0]).exists():
+            with open(self.cfg.split_files[0], 'r') as f:
                 files_dict = json.load(f)
+        else:
+            # Random split
+            val_split = self.cfg.val_split if hasattr(self.cfg, 'val_split') else 0.1
+            print(f"No split_files provided, using random split with val_split={val_split}.")
+            
+            all_midi_files = []
+            for root, _, files in os.walk(self.cfg.midi_dir):
+                for file in files:
+                    if not file.startswith('.') and (file.endswith('.mid') or file.endswith('.midi')):
+                        all_midi_files.append(os.path.join(root, file))
+            np.random.shuffle(all_midi_files)
+            num_val = int(len(all_midi_files) * val_split)
+            files_dict = {
+                "train": all_midi_files[num_val:],
+                "val": all_midi_files[:num_val],
+            }
 
-            # Call create_lakh_dataset
-            create_lakh_dataset(
-                lakh_midi_dir=self.cfg.midi_dir,
-                data_dir=self.cfg.data_dir,
-                files_dict=files_dict,
-                markers_qn_path=self.cfg.markers_qn_path,
-                annotation_dir=self.cfg.annotation_dir,
-                target_ticks_per_beat=self.cfg.target_ticks_per_beat,
-                instrument_overtones=self.cfg.instrument_overtones,
-                separate_drums=self.cfg.separate_drums,
-                compute_sslm_near=self.cfg.use_sslm_near,
-                compute_sslm_far=self.cfg.use_sslm_far,
-                measures_qn_path=self.cfg.measures_qn_path,
-            )
-            print(f"Dataset created successfully at {data_dir}")
-
-        # Load patches
-        patch_data = get_piano_roll_patches(
-            data_dir=self.cfg.data_dir,
+        patch_data = create_piano_roll_patch_data(
+            midi_dir=self.cfg.midi_dir,
+            files_dict=files_dict,
+            markers_qn_path=self.cfg.markers_qn_path,
+            measures_qn_path=self.cfg.measures_qn_path,
+            annotation_dir=self.cfg.annotation_dir,
+            piano_roll_dir=self.cfg.piano_roll_dir,
+            sslm_dir=self.cfg.sslm_dir,
             window_half_ticks=self.cfg.window_half_ticks,
+            target_ticks_per_beat=self.cfg.target_ticks_per_beat,
+            instrument_overtones=self.cfg.instrument_overtones,
+            separate_drums=self.cfg.separate_drums,
             positive_oversampling_factor=self.cfg.positive_oversampling_factor,
             negative_undersampling_factor=self.cfg.negative_undersampling_factor,
-            pad_boundary_patches=self.cfg.pad_boundary_patches,
             return_sslm_near=self.cfg.use_sslm_near,
             return_sslm_far=self.cfg.use_sslm_far,
         )
@@ -102,6 +95,7 @@ class USGTrainer(BaseTrainer):
         metadata_val_non_tubb.reset_index(drop=True, inplace=True)
 
         # Create datasets
+        segment_vocab = sorted(list(set(LABEL_MAP.values())))
         dataset_train = PianoRollDataset(
             piano_rolls,
             metadata_train,

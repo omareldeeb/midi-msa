@@ -837,6 +837,271 @@ def create_lakh_dataset(
 
             torch.save(data, str(metadata_path))
 
+def create_piano_roll_patch_data(
+    midi_dir: Union[Path, str],
+    files_dict: Dict[str, List[str]],
+    markers_qn_path: Optional[Union[Path, str]] = None,
+    measures_qn_path: Optional[Union[Path, str]] = None,
+    annotation_dir: Optional[Union[Path, str]] = None,
+    piano_roll_dir: Optional[Union[Path, str]] = None,
+    sslm_dir: Optional[Union[Path, str]] = None,
+    window_half_ticks: int = 256,
+    target_ticks_per_beat: int = 4,
+    instrument_overtones: bool = True,
+    separate_drums: bool = True,
+    pad_boundary_patches: bool = True,
+    positive_oversampling_factor: int = 2,
+    negative_undersampling_factor: int = 1,
+    return_sslm_near: bool = False,
+    return_sslm_far: bool = False,
+) -> PatchData:
+    if isinstance(midi_dir, str):
+        midi_dir = Path(midi_dir)
+    if markers_qn_path and isinstance(markers_qn_path, str):
+        markers_qn_path = Path(markers_qn_path)
+    if annotation_dir and isinstance(annotation_dir, str):
+        annotation_dir = Path(annotation_dir)
+    if piano_roll_dir and isinstance(piano_roll_dir, str):
+        piano_roll_dir = Path(piano_roll_dir)
+    if sslm_dir and isinstance(sslm_dir, str):
+        sslm_dir = Path(sslm_dir)
+
+    # Create cache paths
+    if piano_roll_dir and not piano_roll_dir.exists():
+        piano_roll_dir.mkdir(parents=True)
+    if sslm_dir and not sslm_dir.exists():
+        sslm_dir.mkdir(parents=True)
+
+    use_old_format = annotation_dir is None
+
+    measure_qns_all = None
+    if measures_qn_path:
+        with open(measures_qn_path, "r") as f:
+            measure_qns_all = json.load(f)
+    
+    # Full piano rolls and sslms will be cached in memory
+    # Otherwise we would need to load them here and again in __getitem__ for every patch
+    piano_roll_idx = 0
+    piano_rolls = []
+    sslm_nears = []
+    sslm_fars = []
+
+    sample_idx = 0
+    patch_data = {}
+
+    for split in files_dict.keys():
+        for test_example in tqdm(files_dict[split], desc=f"Loading examples: {split}"):
+            if use_old_format:
+                midi_path = midi_dir / Path(f"{test_example[0]}") / Path(test_example + ".mid")
+                if not midi_path.exists():
+                    print(f"Missing MIDI file: {midi_path}")
+                    continue
+
+                # MIDI
+                try:
+                    midi = mido.MidiFile(midi_path, clip=True)
+                    ticks_per_beat = midi.ticks_per_beat
+                except Exception as e:
+                    print(f"Error loading MIDI file: {midi_path}")
+                    print(e)
+                    continue
+
+                measure_ticks = None
+                if measure_qns_all and test_example in measure_qns_all:
+                    measure_qns = measure_qns_all[test_example]
+                    measure_ticks = [int(round(qn * target_ticks_per_beat)) for qn in measure_qns]
+                else:
+                    print(f"No measure data for {test_example}")
+                    continue
+
+                # Old format: boundaries from markers_qn.json
+                if use_old_format:
+                    try:
+                        markers_ticks = parse_markers(
+                            markers_qn_path=markers_qn_path,
+                            file_id=test_example,
+                            ticks_per_beat=ticks_per_beat
+                        )
+                    except Exception as e:
+                        print(f"Error parsing markers for {test_example}: {e}")
+                        continue
+
+                    # Convert to target resolution
+                    markers_ticks = [int(round(marker * target_ticks_per_beat / ticks_per_beat)) for marker in markers_ticks]
+                    segment_labels = None
+                else:
+                    # New format: boundaries and labels from annotation file
+                    assert annotation_dir is not None, "annotation_dir required for new format"
+                    annotation_path = annotation_dir / Path(f"{test_example}_labels_coarse_qn.json")
+                    if not annotation_path.exists():
+                        print(f"Missing annotation file: {annotation_path}")
+                        continue
+
+                    try:
+                        with open(annotation_path, "r") as f:
+                            annotations = json.load(f)
+                        processed_annotations = preprocess_labels(annotations)
+
+                        # Extract boundaries (in quarter notes) and labels together
+                        segment_qns = [ann[0] for ann in processed_annotations]
+                        segment_labels = [ann[1] for ann in processed_annotations]
+
+                        # Convert quarter notes to ticks
+                        markers_ticks = [int(round(qn * target_ticks_per_beat)) for qn in segment_qns]
+                    except Exception as e:
+                        print(f"Error processing annotations for {test_example}: {e}")
+                        continue
+
+                piano_roll_path = get_piano_roll_cache_path(test_example, piano_roll_dir, target_ticks_per_beat, instrument_overtones, separate_drums)
+                sslm_path = get_sslm_cache_path(test_example, sslm_dir, target_ticks_per_beat)
+
+                piano_roll = None
+                if piano_roll_path and piano_roll_path.exists():
+                    piano_roll = torch.load(piano_roll_path)
+                else:
+                    try:
+                        piano_roll = create_piano_roll_fast(
+                            path_to_midi_file=midi_path,
+                            chroma=False,
+                            target_ticks_per_beat=target_ticks_per_beat,
+                            instrument_overtones=instrument_overtones,
+                            separate_drums=separate_drums
+                        )
+                    except Exception as e:
+                        print(f"Error creating piano roll for {test_example}: {e}")
+                        continue
+                piano_roll = torch.tensor(piano_roll, dtype=torch.float32)
+                if piano_roll_path and not piano_roll_path.exists():
+                    torch.save(piano_roll, str(piano_roll_path))
+                
+                # Compute first and last nonzero columns of the first channel (first and last onset, respectively)
+                if piano_roll.dim() == 4:
+                    batch_mask = piano_roll[0]  # Select the first batch 
+                else:
+                    batch_mask = piano_roll
+                channel_mask = batch_mask[0]  # Select the first channel
+
+                # Find nonzero column indices
+                nonzero_indices = channel_mask.nonzero(as_tuple=True)
+                if nonzero_indices[1].numel() > 0:
+                    first_nonzero_column = nonzero_indices[1].min().item()
+                    last_nonzero_column = nonzero_indices[1].max().item()
+                else:
+                    continue
+
+                # Throw out markers before first onset or after last onset
+                markers_ticks = torch.tensor(markers_ticks, dtype=torch.float32, device=piano_roll.device)
+                measure_ticks = torch.tensor(measure_ticks, dtype=torch.float32, device=piano_roll.device)
+                markers_ticks = markers_ticks[markers_ticks > first_nonzero_column]
+                markers_ticks = markers_ticks[markers_ticks < last_nonzero_column]
+                measure_ticks = measure_ticks[measure_ticks > first_nonzero_column]
+                measure_ticks = measure_ticks[measure_ticks < last_nonzero_column]
+
+                # Add first and last nonzero column to the segment boundaries
+                markers_ticks = torch.cat([
+                    torch.tensor([first_nonzero_column], dtype=torch.float32, device=piano_roll.device),
+                    markers_ticks,
+                    torch.tensor([last_nonzero_column], dtype=torch.float32, device=piano_roll.device)
+                ])
+                measure_ticks = torch.cat([
+                    torch.tensor([first_nonzero_column], dtype=torch.float32, device=piano_roll.device),
+                    measure_ticks,
+                    torch.tensor([last_nonzero_column], dtype=torch.float32, device=piano_roll.device)
+                ])
+
+                # Crop piano roll to the first and last onset
+                piano_roll = piano_roll[..., first_nonzero_column:last_nonzero_column + 1]
+                # Adjust segment boundaries to the cropped piano roll
+                markers_ticks -= first_nonzero_column
+                measure_ticks -= first_nonzero_column
+
+                # Pad piano roll to the left and right for boundary segment extraction
+                padding = window_half_ticks
+                if pad_boundary_patches:
+                    piano_roll = F.pad(piano_roll, (padding, padding), mode='constant', value=0)
+                    markers_ticks += padding
+                    measure_ticks += padding
+                
+                piano_rolls.append(piano_roll)
+
+                if return_sslm_near or return_sslm_far:
+                    sslm_data = dict()
+                    if sslm_path and sslm_path.exists():
+                        sslm_data = torch.load(sslm_path)
+                    else:
+                        sslm_piano_roll = piano_roll.sum(dim=0)
+                        sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
+                        sslm_near = sslm_near[..., first_nonzero_column:last_nonzero_column + 1]
+                        sslm_far = sslm_far[..., first_nonzero_column:last_nonzero_column + 1]
+                        if pad_boundary_patches:
+                            sslm_near = F.pad(sslm_near, (padding, padding), mode='constant', value=0)
+                            sslm_far = F.pad(sslm_far, (padding, padding), mode='constant', value=0)
+
+                        if return_sslm_near:
+                            sslm_data["sslm_near"] = sslm_near
+                        if return_sslm_far:
+                            sslm_data["sslm_far"] = sslm_far
+                        if sslm_path and not sslm_path.exists():
+                            torch.save(sslm_data, str(sslm_path))
+                    
+                    if return_sslm_near:
+                        sslm_nears.append(sslm_data.get("sslm_near", None))
+                    if return_sslm_far:
+                        sslm_fars.append(sslm_data.get("sslm_far", None))
+
+                for i in measure_ticks:
+                    is_segment_boundary = (markers_ticks == i).any().item()
+                    nearest_segment_boundary = markers_ticks[torch.argmin(torch.abs(markers_ticks - i))].item()
+
+                    patch_info = {
+                        "file_id": test_example,
+                        "midi_path": str(midi_path),
+                        "piano_roll_path": str(piano_roll_path) if piano_roll_path else None,
+                        "sslm_path": str(sslm_path) if sslm_path else None,
+                        
+                        "from": i - window_half_ticks,  # todo: rename to from_tick
+                        "to": i + window_half_ticks,    # todo: rename to to_tick
+                        "is_segment_boundary": is_segment_boundary,
+                        "nearest_segment_boundary": nearest_segment_boundary,
+                        "key": split,   # todo: rename to split
+                        "piano_roll_idx": piano_roll_idx,
+                        "sample_idx": sample_idx,
+                        "patch_idx": i,
+                    }
+                    # Add SSLM patch index if we're returning SSLMs
+                    if return_sslm_near:
+                        patch_info["sslm_near_patch_idx"] = piano_roll_idx
+                    if return_sslm_far:
+                        patch_info["sslm_far_patch_idx"] = piano_roll_idx
+
+                    # Add segment label immediately to the right of patch center
+                    # This is the label of the segment containing position i (or i+epsilon)
+                    if segment_labels is not None:
+                        # Find the largest boundary <= i
+                        boundaries_at_or_before = markers_ticks[markers_ticks <= i]
+                        if len(boundaries_at_or_before) > 0:
+                            # Find index of the most recent boundary
+                            current_boundary = boundaries_at_or_before[-1]
+                            boundary_idx = torch.where(markers_ticks == current_boundary)[0][0].item()
+                            patch_info["segment_label"] = segment_labels[boundary_idx]
+                        else:
+                            # Shouldn't happen if boundaries include first onset
+                            patch_info["segment_label"] = "Start"
+
+                    repetitions = positive_oversampling_factor if is_segment_boundary == 1. else int(random_take(one_in_n=negative_undersampling_factor))
+                    for _ in range(repetitions):
+                        patch_data[sample_idx] = patch_info
+                        sample_idx += 1
+
+                piano_roll_idx += 1
+
+    return PatchData(
+        piano_rolls=piano_rolls,
+        patch_metadata=patch_data,
+        sslm_near_patches=sslm_nears if return_sslm_near else None,
+        sslm_far_patches=sslm_fars if return_sslm_far else None
+    )
+    
 
 _sslms_near = dict()
 _sslms_far = dict()

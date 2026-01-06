@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 from .base_dataset import BaseMidiDataset
-from .utils import widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path
+from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast
 from .label_preprocessor import preprocess_labels
 
 
@@ -90,10 +90,17 @@ class TCNMidiDataset(BaseMidiDataset):
         if self.piano_roll_dir:
             self._precompute_piano_roll_cache()
 
-    def _compute_piano_roll(self, file_id: str) -> Optional[Dict]:
+    def _compute_piano_roll(self, file_id: str) -> torch.Tensor:
         """Compute piano roll using base class method."""
         midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-        return self.parse_and_create_piano_roll(midi_path)
+        piano_roll = create_piano_roll_fast(
+            path_to_midi_file=midi_path,
+            chroma=False,
+            target_ticks_per_beat=self.target_ticks_per_beat,
+            instrument_overtones=self.instrument_overtones,
+            separate_drums=self.separate_drums
+        )
+        return torch.from_numpy(piano_roll)
 
     def _precompute_piano_roll_cache(self):
         """Precompute and cache all piano rolls."""
@@ -157,21 +164,16 @@ class TCNMidiDataset(BaseMidiDataset):
         cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
         if cache_path and cache_path.exists():
             # Load cached piano roll
-            cached_data = torch.load(cache_path)
-            piano_roll = cached_data["piano_roll"]
-            time_signatures = cached_data["time_signatures"]
+            piano_roll = torch.load(cache_path)
         else:
             # Compute piano roll
-            result = self._compute_piano_roll(file_id)
-            if result is None:
+            piano_roll = self._compute_piano_roll(file_id)
+            if piano_roll is None:
                 return self._get_empty_sample()
-
-            piano_roll = result["piano_roll"]
-            time_signatures = result["time_signatures"]
 
             # Save to cache if caching is enabled
             if cache_path:
-                torch.save(result, cache_path)
+                torch.save(piano_roll, cache_path)
 
         if self.transpose_augmentation:
             piano_roll = self.apply_transpose_augmentation(piano_roll)
@@ -273,6 +275,17 @@ class TCNMidiDataset(BaseMidiDataset):
         # Compute beat and downbeat activations from measures
         if (self.compute_beats or self.compute_downbeats) and measure_ticks:
             if self.compute_beats:
+                # Get time signature from midi
+                midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+                _, ticks_per_beat, time_signatures = parse_midi(midi_path)
+                time_signatures = [
+                    (
+                        int(round(tick_pos * self.target_ticks_per_beat / ticks_per_beat)),
+                        numerator,
+                        denominator,
+                    )
+                    for tick_pos, numerator, denominator in time_signatures
+                ]
                 # Use actual time signature from MIDI file to add beats between measures
                 beat_ticks = []
                 for i in range(len(measure_ticks) - 1):

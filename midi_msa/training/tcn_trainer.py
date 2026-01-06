@@ -27,6 +27,7 @@ class TCNTrainer(BaseTrainer):
         return True  # Loss should be minimized
 
     def get_dataloaders(self) -> Tuple:
+        assert self.cfg.annotation_dir is not None, "annotation_dir must be specified for TCN method."
         """Create dataloaders for TCN training."""
         # Load split files if provided
         if self.cfg.split_files:
@@ -76,14 +77,14 @@ class TCNTrainer(BaseTrainer):
         # Create dataloaders
         train_loader = DataLoader(
             train_dataset,
-            batch_size=self.cfg.batch_size,
+            batch_size=1,  # TCN processes full sequences; batch size 1
             shuffle=True,
             num_workers=self.cfg.num_workers,
             pin_memory=True,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=self.cfg.batch_size,
+            batch_size=1,  # TCN processes full sequences; batch size 1
             shuffle=False,
             num_workers=self.cfg.num_workers,
             pin_memory=True,
