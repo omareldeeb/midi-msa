@@ -776,6 +776,8 @@ class MidiSong(object):
         if self.time_signatures[0].click > 0:
             self.time_signatures.insert(0, TimeSig(num=4, denom=4, click=0))
 
+        self.time_signatures = remove_duplicate_events_at_same_click(self.time_signatures, lambda x: x.click)
+
         # maybe slow, but necessary
         if clean_up_time_signatures:
             self.time_signatures = clean_up_time_sigs(time_signatures=self.time_signatures, cpq=self.cpq,
