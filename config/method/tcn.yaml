@@ -1,9 +1,10 @@
 # @package _global_
 method: tcn
 
-# TCN-specific paths
-piano_roll_dir: /Volumes/ExtremePro/piano_roll_dir  # Cache directory for piano rolls
-sslm_dir: /Volumes/ExtremePro/sslm_dir  # Optional cache for SSLMs
+# TCN uses batch size 1 by default
+num_epochs: 50
+lr: 1e-3
+weight_decay: 1e-4
 
 # TCN model parameters
 tcn_layers: 2

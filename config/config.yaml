@@ -3,19 +3,16 @@ defaults:
   - _self_
 
 # Data paths
-annotation_dir: /Users/omar/Documents/Projects/midi-msa/slms_data/v1.1.1
 midi_dir: /Users/omar/Projects/ComposersAssistant/lmd_full
+annotation_dir: /Users/omar/Documents/Projects/midi-msa/slms_data/v1.1.1  # If provided for USG, overrides markers_qn_path and measures_qn_path (new format); required for TCN
+# Optional cache paths
+piano_roll_dir: /Volumes/ExtremePro/piano_roll_dir
+sslm_dir: /Volumes/ExtremePro/sslm_dir
 
 # Piano roll parameters
 target_ticks_per_beat: 4
 instrument_overtones: true
 separate_drums: true
-
-# Training parameters
-batch_size: 1
-num_epochs: 50
-lr: 1e-3
-weight_decay: 1e-4
 
 # Device and paths
 device: auto # "auto", "cpu", "cuda", or "mps"
@@ -23,8 +20,8 @@ checkpoint_dir: checkpoints
 log_dir: runs
 
 # Cross-validation
-split_files: null
-val_split: 0.1
+split_files: ["/Users/omar/Downloads/cv_split_files/cv_split_0.json"]
+val_split: null
 
 # Logging
 wandb:

@@ -1,7 +1,11 @@
 # @package _global_
 method: usg
 
-data_dir: /Volumes/ExtremePro/data_dir  # Must be specified
+# Training parameters
+batch_size: 32
+num_epochs: 50
+lr: 1e-3
+weight_decay: 1e-4
 
 # USG-specific data parameters
 window_half_ticks: 256
@@ -24,8 +28,7 @@ predict_segment_label: false
 segment_label_loss_weight: 1.0
 
 # Data format (for auto-creation if data_dir doesn't exist)
-# OLD FORMAT: requires split_file, markers_qn_path, measures_qn_path
-# NEW FORMAT: requires split_file, annotation_dir only
-split_file: /Users/omar/Downloads/cv_split_files/cv_split_0.json  # JSON with file splits e.g., {"train": [...], "val": [...], "test": [...]}
-markers_qn_path: null  # Old format only: markers_qn.json path
+# OLD FORMAT: requires markers_qn_path, measures_qn_path
+# NEW FORMAT: requires annotation_dir only (in main config)
+markers_qn_path: /Users/omar/Documents/Projects/midi-msa/slms_metadata/markers_qn.json  # Old format only: markers_qn.json path
 measures_qn_path: /Users/omar/Documents/Projects/midi-msa/slms_metadata/measures_qn.json  # Optional: measures_qn.json path
