@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from .label_preprocessor import preprocess_labels, LABEL_MAP
+from .label_preprocessor import preprocess_labels
 from . import midisong as ms
 
 @dataclass
@@ -1356,7 +1356,7 @@ def compute_sslms(piano_roll: torch.Tensor, L: int = 720) -> Tuple[torch.Tensor,
     # treat frequency bins as channels for 1D pooling over time
     X_pool = torch.nn.functional.max_pool1d(X.unsqueeze(0), kernel_size=p, stride=p)  # [1, F, T']
     X_pool = X_pool.squeeze(0)  # [F, T'] = x'
-    T_prime = X_pool.shape[-1]
+    # T_prime = X_pool.shape[-1]
 
     # ---- 2) Per-frame DCT-II (drop DC bin) → MFCC-like ----
     # scipy works on CPU; move to CPU temporarily if needed
