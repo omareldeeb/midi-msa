@@ -27,11 +27,16 @@ class BaseConfig:
     target_ticks_per_beat: int = 4
     instrument_overtones: bool = True
     separate_drums: bool = True
+    transpose_augmentation: bool = True
 
     # Device and paths
     device: str = "auto"
     checkpoint_dir: str = "checkpoints"
     log_dir: str = "runs"
+
+    # Training
+    save_every: int = 10
+    clip_norm: float = 1.0
 
     # Cross-validation
     split_files: Optional[List[str]] = None
@@ -55,6 +60,7 @@ class USGConfig(BaseConfig):
     num_epochs: int = 50
     lr: float = 1e-3
     weight_decay: float = 1e-4
+    early_stopping_patience: int = 10
 
     # USG-specific data parameters
     window_half_ticks: int = 256
@@ -89,6 +95,7 @@ class TCNConfig(BaseConfig):
     num_epochs: int = 50
     lr: float = 1e-3
     weight_decay: float = 1e-4
+    early_stopping_patience: int = 10
 
     # TCN model parameters
     tcn_layers: int = 2
@@ -105,13 +112,6 @@ class TCNConfig(BaseConfig):
     downbeat_loss_weight: float = 3.0
     section_loss_weight: float = 10.0
     function_loss_weight: float = 1.0
-
-    # Training
-    clip_norm: float = 1.0
-    save_every: int = 10
-
-    # Transpose augmentation
-    transpose_augmentation: bool = True
 
 
 def register_configs():

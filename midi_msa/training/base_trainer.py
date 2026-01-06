@@ -169,11 +169,13 @@ class BaseTrainer(ABC):
             val_metric = self.get_val_metric_for_early_stopping(val_metrics)
             improved = self.update_best_metric(val_metric)
 
-            # Save checkpoint
-            checkpoint_path = (
-                Path(self.cfg.checkpoint_dir) / f"checkpoint_epoch_{epoch + 1}.pt"
-            )
-            self.save_checkpoint(checkpoint_path, is_best=improved)
+            # Save checkpoint (periodically or if best)
+            save_every = self.cfg.get("save_every", 1)
+            if improved or (epoch + 1) % save_every == 0:
+                checkpoint_path = (
+                    Path(self.cfg.checkpoint_dir) / f"checkpoint_epoch_{epoch + 1}.pt"
+                )
+                self.save_checkpoint(checkpoint_path, is_best=improved)
 
             if improved:
                 print(f"Validation metric improved to {val_metric:.4f}")
@@ -248,11 +250,13 @@ class BaseTrainer(ABC):
                 val_metric = self.get_val_metric_for_early_stopping(val_metrics)
                 improved = self.update_best_metric(val_metric)
 
-                # Save checkpoint for this fold
-                checkpoint_dir = Path(self.cfg.checkpoint_dir) / f"fold_{fold_idx}"
-                checkpoint_dir.mkdir(parents=True, exist_ok=True)
-                checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
-                self.save_checkpoint(checkpoint_path, is_best=improved, fold=fold_idx)
+                # Save checkpoint for this fold (periodically or if best)
+                save_every = self.cfg.get("save_every", 1)
+                if improved or (epoch + 1) % save_every == 0:
+                    checkpoint_dir = Path(self.cfg.checkpoint_dir) / f"fold_{fold_idx}"
+                    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                    checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+                    self.save_checkpoint(checkpoint_path, is_best=improved, fold=fold_idx)
 
                 if improved:
                     print(f"Validation metric improved to {val_metric:.4f}")

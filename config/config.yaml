@@ -13,6 +13,7 @@ sslm_dir: /Volumes/ExtremePro/sslm_dir
 target_ticks_per_beat: 4
 instrument_overtones: true
 separate_drums: true
+transpose_augmentation: true
 
 # SSLM parameters
 use_sslm_near: true
@@ -22,6 +23,10 @@ use_sslm_far: true
 device: auto # "auto", "cpu", "cuda", or "mps"
 checkpoint_dir: checkpoints
 log_dir: runs
+
+# Training
+save_every: 10
+clip_norm: 1.0
 
 # Cross-validation
 split_files: ["/Users/omar/Downloads/cv_split_files/cv_split_0.json"]

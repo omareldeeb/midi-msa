@@ -112,6 +112,7 @@ class USGTrainer(BaseTrainer):
             piano_rolls,
             metadata_train,
             normalize=self.cfg.patch_normalize,
+            transpose_augmentation=self.cfg.transpose_augmentation,
             num_targets=self.cfg.num_targets,
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
@@ -122,6 +123,7 @@ class USGTrainer(BaseTrainer):
             piano_rolls,
             metadata_val_tubb,
             normalize=self.cfg.patch_normalize,
+            transpose_augmentation=False,  # No augmentation for validation
             num_targets=self.cfg.num_targets,
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
@@ -132,6 +134,7 @@ class USGTrainer(BaseTrainer):
             piano_rolls,
             metadata_val_non_tubb,
             normalize=self.cfg.patch_normalize,
+            transpose_augmentation=False,  # No augmentation for validation
             num_targets=self.cfg.num_targets,
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
@@ -185,6 +188,11 @@ class USGTrainer(BaseTrainer):
                 loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
             loss.backward()
+
+            # Gradient clipping
+            if self.cfg.clip_norm > 0:
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_norm)
+
             self.optimizer.step()
 
             total_loss += loss.item()

@@ -22,10 +22,3 @@ beat_loss_weight: 1.0
 downbeat_loss_weight: 3.0
 section_loss_weight: 10.0
 function_loss_weight: 1.0
-
-# Training
-clip_norm: 1.0
-save_every: 10
-
-# Transpose augmentation
-transpose_augmentation: true
