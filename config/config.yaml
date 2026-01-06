@@ -21,8 +21,8 @@ use_sslm_far: true
 
 # Device and paths
 device: auto # "auto", "cpu", "cuda", or "mps"
-checkpoint_dir: checkpoints
-log_dir: runs
+checkpoint_dir: checkpoints/${now:%Y-%m-%d_%H-%M-%S}
+log_dir: runs/${now:%Y-%m-%d_%H-%M-%S}
 
 # Training
 save_every: 10
