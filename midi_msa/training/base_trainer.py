@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+import copy
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -118,6 +120,18 @@ class BaseTrainer(ABC):
         pass
 
     @abstractmethod
+    def get_dataloaders_for_fold(self, split_file: str) -> Tuple:
+        """Create and return train and validation dataloaders for a specific fold.
+
+        Args:
+            split_file: Path to the JSON file containing train/val split for this fold.
+
+        Returns:
+            Tuple of (train_loader, val_loaders)
+        """
+        pass
+
+    @abstractmethod
     def train_epoch(self, train_loader) -> Dict[str, float]:
         """Train for one epoch. Returns metrics dict."""
         pass
@@ -176,3 +190,120 @@ class BaseTrainer(ABC):
 
         if self.wandb_run:
             self.wandb_run.finish()
+
+    def k_fold_cross_validate(self, split_files: List[str]) -> Dict[str, float]:
+        """Run k-fold cross-validation.
+
+        Args:
+            split_files: List of paths to JSON files, each containing train/val split for one fold.
+
+        Returns:
+            Dictionary containing aggregated metrics across all folds.
+        """
+        k = len(split_files)
+        print(f"\n{'=' * 80}")
+        print(f"Starting {k}-fold cross-validation")
+        print(f"{'=' * 80}\n")
+
+        # Store metrics for each fold
+        fold_metrics: List[Dict[str, float]] = []
+        initial_model_state = copy.deepcopy(self.model.state_dict())
+
+        for fold_idx, split_file in enumerate(split_files):
+            print(f"\n{'=' * 80}")
+            print(f"Fold {fold_idx + 1}/{k} - Using split file: {split_file}")
+            print(f"{'=' * 80}\n")
+
+            # Reset model and optimizer for each fold
+            self.model.load_state_dict(copy.deepcopy(initial_model_state))
+            self.optimizer = self.build_optimizer()
+            self.best_val_metric = float("inf") if self.lower_is_better() else 0.0
+            self.epochs_no_improve = 0
+            self.current_epoch = 0
+
+            # Get dataloaders for this fold
+            train_loader, val_loaders = self.get_dataloaders_for_fold(split_file)
+
+            # Training loop for this fold
+            for epoch in range(self.cfg.num_epochs):
+                self.current_epoch = epoch
+                print(f"\nFold {fold_idx + 1}/{k} - Epoch {epoch + 1}/{self.cfg.num_epochs}")
+
+                # Train
+                train_metrics = self.train_epoch(train_loader)
+                print(f"Train metrics: {train_metrics}")
+                self.log_metrics(
+                    {**train_metrics, "fold": fold_idx}, prefix="train"
+                )
+
+                # Validate
+                val_metrics = self.validate_epoch(val_loaders)
+                print(f"Val metrics: {val_metrics}")
+                self.log_metrics(
+                    {**val_metrics, "fold": fold_idx}, prefix="val"
+                )
+
+                # Check improvement
+                val_metric = self.get_val_metric_for_early_stopping(val_metrics)
+                improved = self.update_best_metric(val_metric)
+
+                # Save checkpoint for this fold
+                checkpoint_dir = Path(self.cfg.checkpoint_dir) / f"fold_{fold_idx}"
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+                self.save_checkpoint(checkpoint_path, is_best=improved, fold=fold_idx)
+
+                if improved:
+                    print(f"Validation metric improved to {val_metric:.4f}")
+                else:
+                    print(
+                        f"No improvement for {self.epochs_no_improve} epochs (best: {self.best_val_metric:.4f})"
+                    )
+
+                # Early stopping
+                if self.should_stop_early():
+                    print("Early stopping triggered")
+                    break
+
+            # Store final metrics for this fold
+            final_val_metrics = self.validate_epoch(val_loaders)
+            final_val_metrics["best_val_metric"] = self.best_val_metric
+            fold_metrics.append(final_val_metrics)
+
+            print(f"\nFold {fold_idx + 1}/{k} completed!")
+            print(f"Best validation metric: {self.best_val_metric:.4f}")
+
+        # Aggregate metrics across folds
+        aggregated_metrics = self._aggregate_fold_metrics(fold_metrics)
+
+        # Log aggregated metrics
+        print(f"\n{'=' * 80}")
+        print(f"{k}-Fold Cross-Validation Results")
+        print(f"{'=' * 80}")
+        for metric_name, value in aggregated_metrics.items():
+            print(f"{metric_name}: {value:.4f}")
+
+        if self.wandb_run:
+            self.log_metrics(aggregated_metrics, prefix="cv_aggregate")
+            self.wandb_run.finish()
+
+        return aggregated_metrics
+
+    def _aggregate_fold_metrics(
+        self, fold_metrics: List[Dict[str, float]]
+    ) -> Dict[str, float]:
+        """Aggregate metrics across folds by computing mean and std."""
+        if not fold_metrics:
+            return {}
+
+        # Get all metric keys from the first fold
+        metric_keys = fold_metrics[0].keys()
+        aggregated = {}
+
+        for key in metric_keys:
+            values = [fm[key] for fm in fold_metrics if key in fm]
+            if values:
+                aggregated[f"{key}_mean"] = np.mean(values)
+                aggregated[f"{key}_std"] = np.std(values)
+
+        return aggregated

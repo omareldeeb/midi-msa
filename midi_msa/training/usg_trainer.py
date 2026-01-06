@@ -32,7 +32,6 @@ class USGTrainer(BaseTrainer):
         """Create dataloaders for USG training."""
         from pathlib import Path
         import json
-        from ..data.utils import create_lakh_dataset
 
         files_dict = None
         if self.cfg.split_files and Path(self.cfg.split_files[0]).exists():
@@ -42,7 +41,7 @@ class USGTrainer(BaseTrainer):
             # Random split
             val_split = self.cfg.val_split if hasattr(self.cfg, 'val_split') else 0.1
             print(f"No split_files provided, using random split with val_split={val_split}.")
-            
+
             all_midi_files = []
             for root, _, files in os.walk(self.cfg.midi_dir):
                 for file in files:
@@ -54,6 +53,21 @@ class USGTrainer(BaseTrainer):
                 "train": all_midi_files[num_val:],
                 "val": all_midi_files[:num_val],
             }
+
+        return self._create_dataloaders(files_dict)
+
+    def get_dataloaders_for_fold(self, split_file: str) -> Tuple:
+        """Create dataloaders for a specific fold."""
+        import json
+
+        with open(split_file, 'r') as f:
+            files_dict = json.load(f)
+
+        return self._create_dataloaders(files_dict)
+
+    def _create_dataloaders(self, files_dict: dict) -> Tuple:
+        """Create train and validation dataloaders from a files dictionary."""
+        import pandas as pd
 
         patch_data = create_piano_roll_patch_data(
             midi_dir=self.cfg.midi_dir,
@@ -72,8 +86,6 @@ class USGTrainer(BaseTrainer):
             return_sslm_near=self.cfg.use_sslm_near,
             return_sslm_far=self.cfg.use_sslm_far,
         )
-
-        import pandas as pd
 
         piano_rolls = patch_data.piano_rolls
         metadata_dict = patch_data.patch_metadata

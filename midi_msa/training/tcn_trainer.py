@@ -27,8 +27,9 @@ class TCNTrainer(BaseTrainer):
         return True  # Loss should be minimized
 
     def get_dataloaders(self) -> Tuple:
-        assert self.cfg.annotation_dir is not None, "annotation_dir must be specified for TCN method."
         """Create dataloaders for TCN training."""
+        assert self.cfg.annotation_dir is not None, "annotation_dir must be specified for TCN method."
+
         # Load split files if provided
         if self.cfg.split_files:
             with open(self.cfg.split_files[0], "r") as f:
@@ -52,6 +53,21 @@ class TCNTrainer(BaseTrainer):
             train_files = file_ids[:split_idx]
             val_files = file_ids[split_idx:]
 
+        return self._create_dataloaders(train_files, val_files)
+
+    def get_dataloaders_for_fold(self, split_file: str) -> Tuple:
+        """Create dataloaders for a specific fold."""
+        assert self.cfg.annotation_dir is not None, "annotation_dir must be specified for TCN method."
+
+        with open(split_file, "r") as f:
+            splits = json.load(f)
+        train_files = splits.get("train", [])
+        val_files = splits.get("val", [])
+
+        return self._create_dataloaders(train_files, val_files)
+
+    def _create_dataloaders(self, train_files, val_files) -> Tuple:
+        """Create train and validation dataloaders from file lists."""
         # Create datasets
         dataset_args = {
             "midi_dir": self.cfg.midi_dir,
