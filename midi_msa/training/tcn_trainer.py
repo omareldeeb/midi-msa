@@ -1,4 +1,6 @@
+import glob
 import json
+from pathlib import Path
 from typing import Dict, Tuple
 
 import mir_eval.segment
@@ -9,9 +11,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .base_trainer import BaseTrainer
-from ..data.tcn_dataset import TCNMidiDataset
 from ..data.label_preprocessor import LABEL_MAP
+from ..data.tcn_dataset import TCNMidiDataset
+from .base_trainer import BaseTrainer
 
 
 class TCNTrainer(BaseTrainer):
@@ -38,9 +40,6 @@ class TCNTrainer(BaseTrainer):
             val_files = splits.get("val", [])
         else:
             # Auto-split from all files
-            import glob
-            from pathlib import Path
-
             all_files = glob.glob(
                 str(Path(self.cfg.annotation_dir) / "*_labels_coarse_qn.json")
             )

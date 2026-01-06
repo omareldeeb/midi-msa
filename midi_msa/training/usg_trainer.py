@@ -1,17 +1,20 @@
+import json
 import os
+from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .base_trainer import BaseTrainer
-from ..data.piano_roll_dataset import PianoRollDataset
-from ..data.utils import get_piano_roll_patches, create_piano_roll_patch_data
-from ..evaluation.metrics import compute_metrics
 from ..data.label_preprocessor import LABEL_MAP
+from ..data.piano_roll_dataset import PianoRollDataset
+from ..data.utils import create_piano_roll_patch_data
+from ..evaluation.metrics import compute_metrics
+from .base_trainer import BaseTrainer
 
 
 class USGTrainer(BaseTrainer):
@@ -30,9 +33,6 @@ class USGTrainer(BaseTrainer):
 
     def get_dataloaders(self) -> Tuple:
         """Create dataloaders for USG training."""
-        from pathlib import Path
-        import json
-
         files_dict = None
         if self.cfg.split_files and Path(self.cfg.split_files[0]).exists():
             with open(self.cfg.split_files[0], 'r') as f:
@@ -58,8 +58,6 @@ class USGTrainer(BaseTrainer):
 
     def get_dataloaders_for_fold(self, split_file: str) -> Tuple:
         """Create dataloaders for a specific fold."""
-        import json
-
         with open(split_file, 'r') as f:
             files_dict = json.load(f)
 
@@ -67,8 +65,6 @@ class USGTrainer(BaseTrainer):
 
     def _create_dataloaders(self, files_dict: dict) -> Tuple:
         """Create train and validation dataloaders from a files dictionary."""
-        import pandas as pd
-
         patch_data = create_piano_roll_patch_data(
             midi_dir=self.cfg.midi_dir,
             files_dict=files_dict,

@@ -1,5 +1,5 @@
-from abc import ABC, abstractmethod
 import copy
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
-from tqdm import tqdm
 
 
 class BaseTrainer(ABC):
