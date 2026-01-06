@@ -254,6 +254,13 @@ def create_piano_roll_fast(path_to_midi_file,
             piano_roll[i] = normalize_channel(piano_roll[i])
 
     # now consolidate our 4 channels to form our output
+    # Always return 3 channels: non-drums, overtones, drums
+    return np.stack([
+        piano_roll[1],
+        piano_roll[2],
+        piano_roll[3]
+    ])
+
     if separate_drums and instrument_overtones:
         return np.stack([
             piano_roll[1],
@@ -1029,8 +1036,7 @@ def create_piano_roll_patch_data(
                     if sslm_path and sslm_path.exists():
                         sslm_data = torch.load(sslm_path)
                     else:
-                        sslm_piano_roll = piano_roll.sum(dim=0)
-                        sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * target_ticks_per_beat))
+                        sslm_near, sslm_far = compute_sslms_from_piano_roll(piano_roll=piano_roll, target_ticks_per_beat=target_ticks_per_beat)
                         sslm_near = sslm_near[..., first_nonzero_column:last_nonzero_column + 1]
                         sslm_far = sslm_far[..., first_nonzero_column:last_nonzero_column + 1]
                         if pad_boundary_patches:
@@ -1336,6 +1342,17 @@ def concatenate_time_frames_torch(tensor, m=2):
     stacked_frames = torch.cat([tensor[..., :, i:time-m+2+i] for i in range(m+1)], dim=-2)
 
     return stacked_frames
+
+def compute_sslms_from_piano_roll(piano_roll: torch.Tensor, target_ticks_per_beat: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    sslm_piano_roll = piano_roll[0] + piano_roll[1]
+    sslm_piano_roll = torch.vstack([sslm_piano_roll, piano_roll[2]])
+    L = int((90 / 0.5) * target_ticks_per_beat)  # 90 seconds worth of lags
+
+    sslm_near, sslm_far = compute_sslms(
+        sslm_piano_roll,
+        L=L
+    )
+    return sslm_near, sslm_far
 
 
 def compute_sslms(piano_roll: torch.Tensor, L: int = 720) -> Tuple[torch.Tensor, torch.Tensor]:

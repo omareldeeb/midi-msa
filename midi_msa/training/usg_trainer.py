@@ -113,6 +113,8 @@ class USGTrainer(BaseTrainer):
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
             segment_function_vocab=segment_vocab,
+            separate_drums=self.cfg.separate_drums,
+            instrument_overtones=self.cfg.instrument_overtones,
         )
 
         dataset_val_tubb = PianoRollDataset(
@@ -124,6 +126,8 @@ class USGTrainer(BaseTrainer):
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
             segment_function_vocab=segment_vocab,
+            separate_drums=self.cfg.separate_drums,
+            instrument_overtones=self.cfg.instrument_overtones,
         )
 
         dataset_val_non_tubb = PianoRollDataset(
@@ -135,6 +139,8 @@ class USGTrainer(BaseTrainer):
             sslm_near_patches=sslm_near_patches,
             sslm_far_patches=sslm_far_patches,
             segment_function_vocab=segment_vocab,
+            separate_drums=self.cfg.separate_drums,
+            instrument_overtones=self.cfg.instrument_overtones,
         )
 
         # Create dataloaders

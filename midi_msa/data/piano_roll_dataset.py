@@ -6,10 +6,16 @@ from torch.utils.data import Dataset
 
 
 def transpose_augmentation(piano_roll, transpose_range=6):
-    transpose_amount = torch.randint(-transpose_range, transpose_range, ())
-    return torch.roll(piano_roll, transpose_amount.item(), dims=-2) # type: ignore
+    """Apply random transpose augmentation to piano roll."""
+    transpose_amount = torch.randint(-transpose_range, transpose_range + 1, (1,)).item()
+    transposed_piano_roll = piano_roll.clone()
+    # Transpose first 2 channels only (non-drums)
+    transposed_piano_roll[0] = torch.roll(transposed_piano_roll[0], int(transpose_amount), dims=-1)
+    transposed_piano_roll[1] = torch.roll(transposed_piano_roll[1], int(transpose_amount), dims=-1)
+    
+    return transposed_piano_roll
 
-
+# TODO: should inherit from BaseDataset (avoid transpose duplication)
 class PianoRollDataset(Dataset):
     def __init__(
         self,
@@ -22,6 +28,8 @@ class PianoRollDataset(Dataset):
         sslm_near_patches=None,
         sslm_far_patches=None,
         segment_function_vocab: Optional[List[str]] = None,
+        separate_drums: bool = True,
+        instrument_overtones: bool = True,
     ):
         self.piano_roll_patches = piano_roll_patches
         self.metadata_df = metadata_df
@@ -32,6 +40,8 @@ class PianoRollDataset(Dataset):
         self.sslm_near_patches = sslm_near_patches
         self.sslm_far_patches = sslm_far_patches
         self.segment_function_vocab = segment_function_vocab
+        self.separate_drums = separate_drums
+        self.instrument_overtones = instrument_overtones
 
     def __len__(self):
         return len(self.metadata_df)
@@ -57,6 +67,28 @@ class PianoRollDataset(Dataset):
 
         if self.transpose_augmentation:
             piano_roll_patch = transpose_augmentation(piano_roll_patch)
+
+        # compute_piano_roll now always returns 3 channels: non-drums, overtones, drums
+        # consolidate output format here
+        if not self.separate_drums and self.instrument_overtones:
+            piano_roll_patch = torch.stack([
+                piano_roll_patch[0] + piano_roll_patch[2],
+                piano_roll_patch[1],
+                torch.zeros_like(piano_roll_patch[0])
+            ])
+        elif self.separate_drums and not self.instrument_overtones:
+            piano_roll_patch = torch.stack([
+                piano_roll_patch[0],
+                torch.zeros_like(piano_roll_patch[0]),
+                piano_roll_patch[2]
+            ])
+        elif not self.separate_drums and not self.instrument_overtones:
+            piano_roll_patch = torch.stack([
+                piano_roll_patch[0] + piano_roll_patch[2],
+                torch.zeros_like(piano_roll_patch[0]),
+                torch.zeros_like(piano_roll_patch[0])
+            ])
+        piano_roll_patch = torch.clip(piano_roll_patch, 0.0, 1.0)
 
         item = {
             "piano_roll_patch": piano_roll_patch,

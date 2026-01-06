@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 from .base_dataset import BaseMidiDataset
-from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast
+from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast, compute_sslms_from_piano_roll
 from .label_preprocessor import preprocess_labels
 
 
@@ -200,8 +200,7 @@ class TCNMidiDataset(BaseMidiDataset):
         num_time_frames = piano_roll.shape[-1]
         
         # Create sample dict
-        sample = {"piano_roll": piano_roll}
-
+        sample = {}
         if self.compute_sslms:
             sslm_cache_path = get_sslm_cache_path(file_id, self.sslms_dir, self.target_ticks_per_beat)
             if sslm_cache_path and sslm_cache_path.exists():
@@ -210,8 +209,7 @@ class TCNMidiDataset(BaseMidiDataset):
                 sslm_far = sslm_data["sslm_far"]
             else:
                 # Merge piano roll across channels for SSLM computation by summing
-                sslm_piano_roll = piano_roll.sum(dim=0, keepdim=True)
-                sslm_near, sslm_far = compute_sslms(sslm_piano_roll, L=int((90 / 0.5) * self.target_ticks_per_beat)) # 14s at 0.5 seconds per beat (120 BPM) at target resolution
+                sslm_near, sslm_far = compute_sslms_from_piano_roll(piano_roll, self.target_ticks_per_beat)
                 if sslm_cache_path:
                     torch.save({"sslm_near": sslm_near, "sslm_far": sslm_far}, sslm_cache_path)
             
@@ -233,6 +231,29 @@ class TCNMidiDataset(BaseMidiDataset):
             sample["sslm_near"] = sslm_near
             sample["sslm_far"] = sslm_far
 
+        # compute_piano_roll now always returns 3 channels: non-drums, overtones, drums
+        # consolidate output format here
+        if not self.separate_drums and self.instrument_overtones:
+            piano_roll = torch.stack([
+                    piano_roll[0] + piano_roll[2],
+                    piano_roll[1],
+                    torch.zeros_like(piano_roll[0])
+            ])
+        elif self.separate_drums and not self.instrument_overtones:
+            piano_roll = torch.stack([
+                piano_roll[0],
+                torch.zeros_like(piano_roll[0]),
+                piano_roll[2]
+            ])
+        elif not self.separate_drums and not self.instrument_overtones:
+            piano_roll = torch.stack([
+                piano_roll[0] + piano_roll[2],
+                torch.zeros_like(piano_roll[0]),
+                torch.zeros_like(piano_roll[0])
+            ])
+        
+        piano_roll = torch.clip(piano_roll, 0.0, 1.0)
+        sample["piano_roll"] = piano_roll
 
         # Add measure ticks
         measure_ticks = None

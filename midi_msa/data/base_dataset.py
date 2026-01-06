@@ -110,7 +110,12 @@ class BaseMidiDataset(Dataset, ABC):
     ) -> torch.Tensor:
         """Apply random transpose augmentation to piano roll."""
         transpose_amount = torch.randint(-transpose_range, transpose_range + 1, (1,)).item()
-        return torch.roll(piano_roll, int(transpose_amount), dims=-2)
+        transposed_piano_roll = piano_roll.clone()
+        # Transpose first 2 channels only (non-drums)
+        transposed_piano_roll[0] = torch.roll(transposed_piano_roll[0], int(transpose_amount), dims=-1)
+        transposed_piano_roll[1] = torch.roll(transposed_piano_roll[1], int(transpose_amount), dims=-1)
+        
+        return transposed_piano_roll
 
     @abstractmethod
     def __len__(self) -> int:
