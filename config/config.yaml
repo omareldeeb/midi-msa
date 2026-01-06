@@ -14,6 +14,10 @@ target_ticks_per_beat: 4
 instrument_overtones: true
 separate_drums: true
 
+# SSLM parameters
+use_sslm_near: true
+use_sslm_far: true
+
 # Device and paths
 device: auto # "auto", "cpu", "cuda", or "mps"
 checkpoint_dir: checkpoints

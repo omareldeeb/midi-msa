@@ -124,7 +124,7 @@ class TCNFrontend(nn.Module):
 
 
 class TCN(nn.Module):
-    INPUT_CHANNELS: int = 3
+    PIANO_ROLL_CHANNELS: int = 3
     CONV_FILTERS: int = 20
     CONV_KERNEL_SIZE: Tuple[int, int] = (5, 5)
     CONV_DROPOUT_RATE: float = 0.15
@@ -135,7 +135,7 @@ class TCN(nn.Module):
 
     def __init__(
         self,
-        input_channels: int = INPUT_CHANNELS,
+        piano_roll_channels: int = PIANO_ROLL_CHANNELS,
         conv_filters: int = CONV_FILTERS,
         conv_kernel_size: Tuple[int, int] = CONV_KERNEL_SIZE,
         conv_dropout_rate: float = CONV_DROPOUT_RATE,
@@ -144,14 +144,18 @@ class TCN(nn.Module):
         tcn_layers: int = TCN_LAYERS,
         tcn_kernel_size: int = TCN_KERNEL_SIZE,
         segment_function_vocab: List[str] = None,
+        use_sslm_near: bool = True,
+        use_sslm_far: bool = True,
         **kwargs
     ):
         super(TCN, self).__init__()
 
         self.segment_function_vocab = segment_function_vocab
+        self.use_sslm_near = use_sslm_near
+        self.use_sslm_far = use_sslm_far
 
-        self.frontend = TCNFrontend(
-            in_channels=input_channels,
+        self.piano_roll_frontend = TCNFrontend(
+            in_channels=piano_roll_channels,
             out_channels=conv_filters,
             conv_kernel_size=conv_kernel_size,
             conv_dropout_rate=conv_dropout_rate,
@@ -159,25 +163,31 @@ class TCN(nn.Module):
             frequency_conv_kernel_size=frequency_conv_kernel_size,
         )
 
-        self.sslm_near_frontend = TCNFrontend(
-            in_channels=1,
-            out_channels=conv_filters,
-            conv_kernel_size=conv_kernel_size,
-            conv_dropout_rate=conv_dropout_rate,
-            conv_pool_size=conv_pool_size,
-            frequency_conv_kernel_size=frequency_conv_kernel_size,
-        )
-
-        self.sslm_far_frontend = TCNFrontend(
-            in_channels=1,
-            out_channels=conv_filters,
-            conv_kernel_size=conv_kernel_size,
-            conv_dropout_rate=conv_dropout_rate,
-            conv_pool_size=conv_pool_size,
-            frequency_conv_kernel_size=frequency_conv_kernel_size,
-        )
+        if self.use_sslm_near:
+            self.sslm_near_frontend = TCNFrontend(
+                in_channels=1,
+                out_channels=conv_filters,
+                conv_kernel_size=conv_kernel_size,
+                conv_dropout_rate=conv_dropout_rate,
+                conv_pool_size=conv_pool_size,
+                frequency_conv_kernel_size=frequency_conv_kernel_size,
+            )
+        if self.use_sslm_far:
+             self.sslm_far_frontend = TCNFrontend(
+                in_channels=1,
+                out_channels=conv_filters,
+                conv_kernel_size=conv_kernel_size,
+                conv_dropout_rate=conv_dropout_rate,
+                conv_pool_size=conv_pool_size,
+                frequency_conv_kernel_size=frequency_conv_kernel_size,
+            )
         
-        frontend_out_channels = conv_filters * 3  # 3 channels: spectrogram + 2 SSLM
+        frontend_out_channels = conv_filters
+        if self.use_sslm_near:
+            frontend_out_channels += conv_filters
+        if self.use_sslm_far:
+            frontend_out_channels += conv_filters
+
         self.frontend_projection = nn.Conv2d(
             in_channels=frontend_out_channels,
             out_channels=conv_filters,
@@ -220,16 +230,16 @@ class TCN(nn.Module):
 
     def forward(self, x: torch.Tensor, sslm_near: Optional[torch.Tensor], sslm_far: Optional[torch.Tensor]) -> TCNOutput:
         N, C, F, T = x.shape
-        x = self.frontend(x)    # (1, 20, 1, T)
+        x = self.piano_roll_frontend(x)    # (1, 20, 1, T)
 
-        if sslm_near is not None:
+        if self.use_sslm_near and sslm_near is not None:
             sslm_near = self.sslm_near_frontend(sslm_near)
             x = torch.cat((x, sslm_near), dim=1)
-        if sslm_far is not None:
+        if self.use_sslm_far and sslm_far is not None:
             sslm_far = self.sslm_far_frontend(sslm_far)
             x = torch.cat((x, sslm_far), dim=1)
 
-        if sslm_near is not None and sslm_far is not None:
+        if self.use_sslm_near or self.use_sslm_far:
             x = self.frontend_projection(x)
 
         for layer in self.tcn_layers:

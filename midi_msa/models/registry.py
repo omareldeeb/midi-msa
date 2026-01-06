@@ -30,11 +30,13 @@ def build_model(cfg: DictConfig) -> nn.Module:
         )
     elif cfg.method == "tcn":
         model = TCN(
-            input_channels=3,  # Piano roll channels
+            piano_roll_channels=3,  # Piano roll channels
             conv_filters=cfg.conv_filters,
             tcn_layers=cfg.tcn_layers,
             tcn_kernel_size=cfg.tcn_kernel_size,
             segment_function_vocab=segment_vocab,
+            use_sslm_near=cfg.use_sslm_near,
+            use_sslm_far=cfg.use_sslm_far,
         )
     else:
         raise ValueError(f"Unknown method: {cfg.method}")

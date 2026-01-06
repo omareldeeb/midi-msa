@@ -19,10 +19,6 @@ pretrained: false
 output_features: 64
 num_targets: 1
 
-# SSLM features
-use_sslm_near: true
-use_sslm_far: true
-
 # Multi-task learning
 predict_segment_label: false
 segment_label_loss_weight: 1.0
