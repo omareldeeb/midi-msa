@@ -379,8 +379,8 @@ class TCNTrainer(BaseTrainer):
                                 total_pairwise_prec += pairwise_prec
                                 total_pairwise_recall += pairwise_recall
                                 total_pairwise_f1 += pairwise_f1
-                            except ValueError:
-                                pass
+                            except ValueError as err:
+                                print(f'Warning: Error in mir_eval.segment.pairwise: {err}')
 
                 pbar.set_postfix({
                     "batch_loss": losses["total_loss"].item(),
