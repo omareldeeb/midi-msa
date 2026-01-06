@@ -269,12 +269,12 @@ class TCN(nn.Module):
             measure_left = 0
             if i - 1 >= 0:
                 measure_left = measure_ticks_np[i - 1]
-            window_left = (measure_tick - measure_left) // 4
+            window_left = (measure_tick - measure_left) // 2
 
             measure_right = pred_boundary_probs.shape[-1]
             if i + 1 < len(measure_ticks_np):
                 measure_right = measure_ticks_np[i + 1]
-            window_right = (measure_right - measure_tick) // 4
+            window_right = (measure_right - measure_tick) // 2
 
             probs = pred_boundary_probs[measure_tick - window_left : measure_tick + window_right]
             if len(probs) > 0:
