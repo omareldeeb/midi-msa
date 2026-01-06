@@ -18,12 +18,13 @@ from midi_msa.models.tcn import TCN
 
 
 class DatasetVisualizer:
-    def __init__(self, dataset, target_ticks_per_beat=4, model=None, device='cpu'):
+    def __init__(self, dataset, target_ticks_per_beat=4, model=None, device='cpu', segment_function_vocab=None):
         self.dataset = dataset
         self.target_ticks_per_beat = target_ticks_per_beat
         self.current_idx = 0
         self.info_text_obj = None  # Store reference to info text for cleanup
         self.model = model
+        self.segment_function_vocab = segment_function_vocab
         self.device = device
 
         # Set model to eval mode if provided
@@ -32,11 +33,12 @@ class DatasetVisualizer:
             self.model.to(device)
 
         # Create figure with subplots
-        self.fig = plt.figure(figsize=(16, 8))
+        self.fig = plt.figure(figsize=(18, 6), dpi=150)
         self.fig.suptitle('TCN Dataset Visualizer', fontsize=14, fontweight='bold')
 
         # Create grid spec for better layout (removed segment labels subplot)
-        gs = self.fig.add_gridspec(5, 1, height_ratios=[3, 3, 3, 1, 0.3], hspace=0.3)
+        gs = self.fig.add_gridspec(6, 1, height_ratios=[3, 3, 3, 1, 2, 0.3], hspace=0.3)
+        # gs = self.fig.add_gridspec(1, 1, height_ratios=[1], hspace=0.3)
 
         # Main piano roll plot
         self.ax_piano = self.fig.add_subplot(gs[0])
@@ -58,14 +60,20 @@ class DatasetVisualizer:
         self.ax_boundaries.set_ylim(-0.1, 1.1)
         self.ax_boundaries.set_xlabel('Time (ticks)')
 
+        # Functional label activations plot
+        self.ax_functions = self.fig.add_subplot(gs[4], sharex=self.ax_piano)
+        self.ax_functions.set_title('Functional Label Activations')
+        self.ax_functions.set_ylabel('Label')
+        self.ax_functions.set_xlabel('Time (ticks)')
+
         # Navigation buttons
-        self.ax_buttons = self.fig.add_subplot(gs[4])
+        self.ax_buttons = self.fig.add_subplot(gs[5])
         self.ax_buttons.axis('off')
 
         # Create button axes
         button_width = 0.1
         button_height = 0.05
-        button_y = 0.1
+        button_y = 0.01
 
         ax_prev = plt.axes([0.3, button_y, button_width, button_height])
         ax_next = plt.axes([0.6, button_y, button_width, button_height])
@@ -123,6 +131,7 @@ class DatasetVisualizer:
         # Clear previous plots
         self.ax_piano.clear()
         self.ax_boundaries.clear()
+        self.ax_functions.clear()
 
         # Plot 1: Piano Roll with segment labels as rectangles
 
@@ -253,16 +262,22 @@ class DatasetVisualizer:
         if self.model is not None:
             with torch.no_grad():
                 # Get piano roll input and move to device
-                piano_roll_input = sample["piano_roll"].unsqueeze(0).to(self.device)  # Add batch dimension
+                piano_roll_input = sample["piano_roll"].unsqueeze(0).to(torch.float32).to(self.device)  # Add batch dimension
                 sslm_near_input = sample.get("sslm_near", None)
                 sslm_far_input = sample.get("sslm_far", None)
                 if sslm_near_input is not None:
-                    sslm_near_input = sslm_near_input.unsqueeze(0).to(self.device)
+                    sslm_near_input = sslm_near_input.unsqueeze(0).to(torch.float32).to(self.device)
                 if sslm_far_input is not None:
-                    sslm_far_input = sslm_far_input.unsqueeze(0).to(self.device)
+                    sslm_far_input = sslm_far_input.unsqueeze(0).to(torch.float32).to(self.device)
 
                 # Get model predictions
                 output = self.model(piano_roll_input, sslm_near=sslm_near_input, sslm_far=sslm_far_input)
+
+                # Store output for later use in functional label visualization
+                self.current_output = output
+
+                predicted_boundary_ticks, predicted_label_indices = self.model.compute_predictions(output=output, measure_ticks=measure_ticks)
+                print(f"Predicted labels: {[self.segment_function_vocab[idx] for idx in predicted_label_indices]}")
 
                 # Get segment boundary predictions and apply sigmoid
                 segment_pred = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
@@ -290,6 +305,50 @@ class DatasetVisualizer:
         self.ax_boundaries.grid(True, alpha=0.3)
         self.ax_boundaries.legend(loc='upper right')
 
+        # Plot 3: Functional Label Activations
+        if self.segment_function_vocab is not None and self.model is not None and hasattr(self, 'current_output'):
+            num_classes = len(self.segment_function_vocab)
+
+            # Get function outputs and apply softmax to get probabilities
+            function_probs = torch.softmax(self.current_output.function_outputs, dim=1).squeeze(0).cpu().numpy()
+            # Shape: (num_classes, time_frames)
+
+            # Generate colors for each functional label
+            colors = plt.cm.tab20(np.linspace(0, 1, num_classes))
+
+            # Plot each functional label as a separate curve
+            for class_idx in range(num_classes):
+                label_name = self.segment_function_vocab[class_idx]
+                probs = function_probs[class_idx, :]
+
+                self.ax_functions.plot(
+                    range(time_frames),
+                    probs,
+                    color=colors[class_idx],
+                    linewidth=1.5,
+                    label=label_name,
+                    alpha=0.8
+                )
+
+            # Set axis properties
+            self.ax_functions.set_ylabel('Probability')
+            self.ax_functions.set_xlabel(f'Time (ticks @ {self.target_ticks_per_beat} ticks/beat)')
+            self.ax_functions.set_ylim(-0.05, 1.05)
+            self.ax_functions.grid(True, alpha=0.3)
+            self.ax_functions.legend(loc='upper right', fontsize=8, ncol=2)
+        else:
+            # If no model predictions, just show a message
+            self.ax_functions.text(
+                0.5, 0.5,
+                'No Functional Label Predictions\n(Model required)',
+                ha='center',
+                va='center',
+                transform=self.ax_functions.transAxes,
+                fontsize=10
+            )
+            self.ax_functions.set_ylabel('Probability')
+            self.ax_functions.set_xlabel(f'Time (ticks @ {self.target_ticks_per_beat} ticks/beat)')
+
         # Remove old info text if it exists
         if self.info_text_obj is not None:
             self.info_text_obj.remove()
@@ -304,8 +363,8 @@ class DatasetVisualizer:
             num_boundaries = len(boundary_positions)
             info_text += f"Number of segments: {num_boundaries}\n"
 
-        self.info_text_obj = self.fig.text(0.02, 0.02, info_text, fontsize=9, family='monospace',
-                                          verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        # self.info_text_obj = self.fig.text(0.02, 0.02, info_text, fontsize=9, family='monospace',
+                                        #   verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
         # Update canvas
         self.fig.canvas.draw()
@@ -363,13 +422,15 @@ def main():
 
     # Create dataset with same parameters as training
     print("Loading TCN Dataset...")
+    label_map = list(set(LABEL_MAP.values()))
+    label_map.sort()
     dataset = TCNMidiDataset(
         midi_dir=args.midi_dir,
         sslms_dir=args.sslm_dir,
         annotation_dir=args.annotation_dir,
         midi_files=midi_files,
         target_ticks_per_beat=args.target_ticks_per_beat,
-        segment_function_vocab=list(set(LABEL_MAP.values())),
+        segment_function_vocab=label_map,
         compute_beats=False,
         compute_downbeats=False,
         compute_segments=True,
@@ -399,10 +460,9 @@ def main():
             raise ValueError("Dataset must have segment_function_vocab to load model")
 
         # Create model with same vocab as dataset
-        model = TCN(segment_function_vocab=dataset.segment_function_vocab)
-
+        model = TCN(segment_function_vocab=dataset.segment_function_vocab, conv_filters=20, tcn_layers=5, tcn_kernel_size=3)
         # Load checkpoint
-        checkpoint = torch.load(args.checkpoint, map_location=device)
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
 
         # Extract model state dict from checkpoint
         if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
@@ -427,7 +487,7 @@ def main():
         print("  - Red line shows ground truth boundaries")
 
     DatasetVisualizer(dataset, target_ticks_per_beat=args.target_ticks_per_beat,
-                      model=model, device=device)
+                      model=model, device=device, segment_function_vocab=dataset.segment_function_vocab)
 
 
 if __name__ == '__main__':
