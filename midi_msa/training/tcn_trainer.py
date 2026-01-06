@@ -163,14 +163,14 @@ class TCNTrainer(BaseTrainer):
 
         pbar = tqdm(train_loader, desc="Training")
         for batch in pbar:
-            piano_rolls = batch["piano_roll"].to(self.device)
+            piano_rolls = batch["piano_roll"].to(torch.float32).to(self.device)
             sslm_near = batch.get("sslm_near")
             sslm_far = batch.get("sslm_far")
 
             if sslm_near is not None:
-                sslm_near = sslm_near.to(self.device)
+                sslm_near = sslm_near.to(torch.float32).to(self.device)
             if sslm_far is not None:
-                sslm_far = sslm_far.to(self.device)
+                sslm_far = sslm_far.to(torch.float32).to(self.device)
 
             targets = {
                 k: v.to(self.device)
@@ -223,15 +223,15 @@ class TCNTrainer(BaseTrainer):
         with torch.no_grad():
             pbar = tqdm(val_loader, desc="Validation")
             for batch in pbar:
-                piano_rolls = batch["piano_roll"].to(self.device)
+                piano_rolls = batch["piano_roll"].to(torch.float32).to(self.device)
                 sslm_near = batch.get("sslm_near")
                 sslm_far = batch.get("sslm_far")
                 measure_ticks = batch.get("measure_ticks")
 
                 if sslm_near is not None:
-                    sslm_near = sslm_near.to(self.device)
+                    sslm_near = sslm_near.to(torch.float32).to(self.device)
                 if sslm_far is not None:
-                    sslm_far = sslm_far.to(self.device)
+                    sslm_far = sslm_far.to(torch.float32).to(self.device)
 
                 targets = {
                     k: v.to(self.device)

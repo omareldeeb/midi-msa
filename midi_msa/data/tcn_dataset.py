@@ -90,16 +90,21 @@ class TCNMidiDataset(BaseMidiDataset):
         if self.piano_roll_dir:
             self._precompute_piano_roll_cache()
 
-    def _compute_piano_roll(self, file_id: str) -> torch.Tensor:
+    def _compute_piano_roll(self, file_id: str) -> Optional[torch.Tensor]:
         """Compute piano roll using base class method."""
         midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-        piano_roll = create_piano_roll_fast(
-            path_to_midi_file=midi_path,
-            chroma=False,
-            target_ticks_per_beat=self.target_ticks_per_beat,
-            instrument_overtones=self.instrument_overtones,
-            separate_drums=self.separate_drums
-        )
+        try:
+            piano_roll = create_piano_roll_fast(
+                path_to_midi_file=midi_path,
+                chroma=False,
+                target_ticks_per_beat=self.target_ticks_per_beat,
+                instrument_overtones=self.instrument_overtones,
+                separate_drums=self.separate_drums
+            )
+        except Exception as e:
+            print(f"Error computing piano roll for {midi_path}: {e}")
+            return None
+        
         return torch.from_numpy(piano_roll)
 
     def _precompute_piano_roll_cache(self):
@@ -365,6 +370,9 @@ class TCNMidiDataset(BaseMidiDataset):
             sample["beat_activation"] = torch.zeros(1)
         if self.compute_downbeats:
             sample["downbeat_activation"] = torch.zeros(1)
+        if self.compute_sslms:
+            sample["sslm_near"] = torch.zeros(1, 128, 1)
+            sample["sslm_far"] = torch.zeros(1, 128, 1)
         return sample
 
 

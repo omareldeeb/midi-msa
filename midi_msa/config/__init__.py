@@ -29,6 +29,10 @@ class BaseConfig:
     separate_drums: bool = True
     transpose_augmentation: bool = True
 
+    # SSLM features
+    use_sslm_near: bool = True
+    use_sslm_far: bool = True
+
     # Device and paths
     device: str = "auto"
     checkpoint_dir: str = "checkpoints"
@@ -73,10 +77,6 @@ class USGConfig(BaseConfig):
     pretrained: bool = False
     output_features: int = 64
     num_targets: int = 1
-
-    # SSLM features
-    use_sslm_near: bool = True
-    use_sslm_far: bool = True
 
     # Multi-task learning
     predict_segment_label: bool = False
