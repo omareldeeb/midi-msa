@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 from .base_dataset import BaseMidiDataset
-from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast, compute_sslms_from_piano_roll
+from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast, compute_sslms_from_midi_path
 from .label_preprocessor import preprocess_labels
 
 
@@ -209,7 +209,9 @@ class TCNMidiDataset(BaseMidiDataset):
                 sslm_far = sslm_data["sslm_far"]
             else:
                 # Merge piano roll across channels for SSLM computation by summing
-                sslm_near, sslm_far = compute_sslms_from_piano_roll(piano_roll, self.target_ticks_per_beat)
+                midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+                sslm_near, sslm_far = compute_sslms_from_midi_path(p=midi_path,
+                                                                   target_ticks_per_beat=self.target_ticks_per_beat)
                 if sslm_cache_path:
                     torch.save({"sslm_near": sslm_near, "sslm_far": sslm_far}, sslm_cache_path)
             
