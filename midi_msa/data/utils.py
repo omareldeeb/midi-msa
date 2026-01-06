@@ -774,8 +774,6 @@ def create_lakh_dataset(
                 path_to_midi_file=midi_path,
                 chroma=False,
                 target_ticks_per_beat=target_ticks_per_beat,
-                instrument_overtones=instrument_overtones,
-                separate_drums=separate_drums,
             )
             piano_roll = torch.tensor(piano_roll, dtype=torch.float32)
             torch.save(piano_roll, str(piano_roll_path))
@@ -946,8 +944,6 @@ def create_piano_roll_patch_data(
                         path_to_midi_file=midi_path,
                         chroma=False,
                         target_ticks_per_beat=target_ticks_per_beat,
-                        instrument_overtones=instrument_overtones,
-                        separate_drums=separate_drums
                     )
                 except Exception as e:
                     print(f"Error creating piano roll for {test_example}: {e}")

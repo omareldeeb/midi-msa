@@ -98,8 +98,6 @@ class TCNMidiDataset(BaseMidiDataset):
                 path_to_midi_file=midi_path,
                 chroma=False,
                 target_ticks_per_beat=self.target_ticks_per_beat,
-                instrument_overtones=self.instrument_overtones,
-                separate_drums=self.separate_drums
             )
         except Exception as e:
             print(f"Error computing piano roll for {midi_path}: {e}")
