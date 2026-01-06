@@ -5,6 +5,7 @@ method: tcn
 num_epochs: 50
 lr: 1e-3
 weight_decay: 1e-4
+early_stopping_patience: 10
 
 # TCN model parameters
 tcn_layers: 2

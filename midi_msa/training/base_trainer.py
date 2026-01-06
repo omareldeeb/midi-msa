@@ -86,8 +86,9 @@ class BaseTrainer(ABC):
         self.current_epoch = checkpoint["epoch"]
         return checkpoint
 
-    def should_stop_early(self, patience: int = 5) -> bool:
+    def should_stop_early(self) -> bool:
         """Check if training should stop due to no improvement."""
+        patience = self.cfg.get("early_stopping_patience", 10)
         return self.epochs_no_improve >= patience
 
     def update_best_metric(self, val_metric: float) -> bool:
