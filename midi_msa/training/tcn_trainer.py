@@ -79,14 +79,17 @@ class TCNTrainer(BaseTrainer):
             "compute_segments": self.cfg.compute_segments,
             "instrument_overtones": self.cfg.instrument_overtones,
             "separate_drums": self.cfg.separate_drums,
-            "transpose_augmentation": self.cfg.transpose_augmentation,
         }
 
         train_dataset = TCNMidiDataset(
-            midi_files=train_files, sslms_dir=self.cfg.sslm_dir, **dataset_args
+            midi_files=train_files, sslms_dir=self.cfg.sslm_dir,
+            transpose_augmentation=self.cfg.transpose_augmentation,
+            **dataset_args
         )
         val_dataset = TCNMidiDataset(
-            midi_files=val_files, sslms_dir=self.cfg.sslm_dir, **dataset_args
+            midi_files=val_files, sslms_dir=self.cfg.sslm_dir,
+            transpose_augmentation=False,
+            **dataset_args
         )
 
         # Create dataloaders
