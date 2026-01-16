@@ -430,6 +430,8 @@ class TCNTrainer(BaseTrainer):
             metrics["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
             for label in self.label_map:
                 metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
+            # Average label F1
+            metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in self.label_map])
 
         return metrics
 
