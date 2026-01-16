@@ -278,18 +278,31 @@ class Track(object):
         """
         if quantize_end_too:
             note_ons, note_offs = compute_split_notes_to_note_ons_and_note_offs(self.notes)
-            quantize_list(L=note_ons, start_click=0, end_click=None, cpq=cpq, q=q)
-            quantize_list(L=note_offs, start_click=0, end_click=None, cpq=cpq, q=q)
+            quantize_list(L=note_ons, start_click=0, end_click=None, cpq=cpq, q=q, prefer_left=True)
+            quantize_list(L=note_offs, start_click=0, end_click=None, cpq=cpq, q=q, prefer_left=False)
             # then put this back together into Notes
             notes = compute_join_note_ons_and_note_offs_to_notes(note_ons, note_offs)
             self.notes = notes
 
         else:
             # quantize all of self.notes
-            quantize_list(L=self.notes, start_click=0, end_click=None, cpq=cpq, q=q)
+            quantize_list(L=self.notes, start_click=0, end_click=None, cpq=cpq, q=q, prefer_left=True)
 
         # if two notes quantize to the same start position, clean that up.
-        self.notes = remove_duplicate_events_at_same_click(self.notes, lambda x: x.pitch)
+        self.notes = self._remove_note_duplicates(self.notes)
+
+    def _remove_note_duplicates(self, notes):
+        """when two note_ons have the same click and pitch, keeps the one with the highest velocity"""
+        res_by_click_and_pitch = {}
+        for n in notes:
+            cp = (n.click, n.pitch)
+            best: typing.Union[NoteOn, None] = res_by_click_and_pitch.get(cp, None)
+            if best is None:
+                res_by_click_and_pitch[cp] = n
+            else:
+                if best.vel < n.vel:
+                    res_by_click_and_pitch[cp] = n
+        return list(res_by_click_and_pitch.values())
 
     # test written
     def split_notes_to_note_ons_and_note_offs(self):
@@ -358,6 +371,17 @@ class Track(object):
                 return True
             clicks_seen.add(c)
         return False
+
+    def change_cpq(self, from_cpq, to_cpq):
+        """in place operation"""
+        eps = 0.00001
+        factor = to_cpq / from_cpq
+        for iterable in self.all_iterables_with_time_events():
+            for n in iterable:
+                n.click = int(n.click * factor + eps)
+                if hasattr(n, 'end'):
+                    n.end = int(n.end * factor + eps)
+
 
 
 class ByMeasureTrack(object):
@@ -934,6 +958,29 @@ class MidiSong(object):
         res.tracks.extend(d_tracks)
         return res
 
+    def change_cpq(self, to_cpq):
+        """in place operation"""
+        factor = to_cpq / self.cpq
+
+        for t in self.tracks:
+            t.change_cpq(from_cpq=self.cpq, to_cpq=to_cpq)
+
+        # then update self.markers, self.cpq, and self.time_signatures
+        eps = 0.00001
+        for m in self.markers:
+            m.click = int(m.click * factor + eps)
+
+        for m in self.tempo_changes:
+            m.click = int(m.click * factor + eps)
+
+        for m in self.time_signatures:
+            m.click = int(m.click * factor + eps)
+
+        self.time_signatures = remove_duplicate_events_at_same_click(self.time_signatures, lambda x: x.click)
+
+        self.cpq = to_cpq
+
+
 
 # Note that unlike time_signatures for MidiSong's, a MidiSongByMeasure S may have TempoChange's with equal values
 # next to each other in S.tempo_changes.
@@ -1446,21 +1493,33 @@ def _track_sorter_by_inst_and_avg_note_pitch(tracks, sort_key_fn):
 
 ##################################################
 # Functions
-def _index_of_closest_element_in_sorted_numeric_list(L: list, x) -> int:
-    """returns i such that abs(x - L[i]) is minimized. If there is a tie, defaults to the rightmost index."""
+def _index_of_closest_element_in_sorted_numeric_list(L: list, x, prefer_left=False) -> int:
+    """returns i such that abs(x - L[i]) is minimized. If there is a tie, defaults to the rightmost index,
+    unless prefer_left is True."""
+    if not L:
+        raise ValueError("L must not be empty")
+
     i = bisect.bisect_right(L, x)
     if i == 0:
         return i
-    elif i == len(L):
+    if i == len(L):
         return i - 1
-    elif L[i - 1] == x:
+    if L[i - 1] == x:
         return i - 1
-    else:
-        a, b = L[i - 1], L[i]
-        if x - a < b - x:
+
+    a, b = L[i - 1], L[i]
+
+    dist_l, dist_r = x - a, b - x
+    if dist_l == dist_r:
+        if prefer_left:
             return i - 1
         else:
             return i
+
+    if dist_l < dist_r:
+        return i - 1
+    else:
+        return i
 
 
 def _lcm(a: int, b: int):
@@ -1575,7 +1634,7 @@ def _get_all_grid_points_per_qn(cpq: int, q=(4, 3)):
 
 
 # test written
-def quantize_list(L, start_click, cpq, end_click=None, q=(4, 3)):
+def quantize_list(L, start_click, cpq, end_click=None, q=(4, 3), prefer_left=True):
     """L a list of events whose .click values are start_click or later.
 
     Alters the .click values of the elements of L in place according to the supplied cpq and q values.
@@ -1610,7 +1669,7 @@ def quantize_list(L, start_click, cpq, end_click=None, q=(4, 3)):
         click = evt.click - start_click
         if click < 0:
             raise ValueError('click={} in L before start_click={}'.format(evt.click, start_click))
-        y_i = _index_of_closest_element_in_sorted_numeric_list(quantize_endpoints, click % cpq)
+        y_i = _index_of_closest_element_in_sorted_numeric_list(quantize_endpoints, click % cpq, prefer_left)
         y = quantize_endpoints[y_i]
 
         click_quantized = cpq * int(click / cpq) + y  # click's QN start (which is why we round down) + offset

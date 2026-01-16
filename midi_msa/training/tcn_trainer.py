@@ -178,7 +178,8 @@ class TCNTrainer(BaseTrainer):
             targets = {
                 k: v.to(self.device)
                 for k, v in batch.items()
-                if k not in ["piano_roll", "sslm_near", "sslm_far", "measure_ticks"]
+                if k not in ["piano_roll", "sslm_near", "sslm_far", "measure_ticks", 'file_id',
+                             'segment_ticks_in_piano_roll', 'segment_labels_in_piano_roll']
             }
 
             self.optimizer.zero_grad()
@@ -239,7 +240,8 @@ class TCNTrainer(BaseTrainer):
                 targets = {
                     k: v.to(self.device)
                     for k, v in batch.items()
-                    if k not in ["piano_roll", "sslm_near", "sslm_far", "measure_ticks"]
+                    if k not in ["piano_roll", "sslm_near", "sslm_far", "measure_ticks", 'file_id',
+                                 'segment_ticks_in_piano_roll', 'segment_labels_in_piano_roll']
                 }
 
                 outputs = self.model(
@@ -249,6 +251,7 @@ class TCNTrainer(BaseTrainer):
 
                 total_loss += losses["total_loss"].item()
                 num_batches += 1
+                t_max = piano_rolls.shape[-1] - 1
 
                 # Compute boundary and pairwise metrics
                 if measure_ticks is not None and "segment_activation" in targets:
@@ -263,36 +266,10 @@ class TCNTrainer(BaseTrainer):
                             )
                         )
 
-                        # Ensure boundaries include start
-                        if (
-                            len(predicted_boundary_ticks) > 0
-                            and predicted_boundary_ticks[0] != 0
-                        ):
-                            predicted_boundary_ticks = np.insert(
-                                predicted_boundary_ticks, 0, 0
-                            )
-                            start_label_index = (
-                                self.label_map.index("Start")
-                                if "Start" in self.label_map
-                                else 0
-                            )
-                            predicted_label_indices = np.insert(
-                                predicted_label_indices, 0, start_label_index
-                            )
-
-                        # Ensure boundaries include end
-                        if (
-                            len(predicted_boundary_ticks) > 0
-                            and predicted_boundary_ticks[-1]
-                            != boundaries_pred.shape[-1] - 1
-                        ):
-                            predicted_boundary_ticks = np.append(
-                                predicted_boundary_ticks, boundaries_pred.shape[-1] - 1
-                            )
-                        elif len(predicted_boundary_ticks) > 0:
-                            # Last tick is the end, so final label doesn't make sense
-                            predicted_label_indices = predicted_label_indices[:-1]
-
+                        # add one tick beyond the end for stacking purposes
+                        predicted_boundary_ticks = [int(x) for x in predicted_boundary_ticks]
+                        if predicted_boundary_ticks and predicted_boundary_ticks[-1] != t_max + 1:
+                            predicted_boundary_ticks.append(t_max + 1)
                         estimated_intervals = np.column_stack(
                             (
                                 predicted_boundary_ticks[:-1],
@@ -303,9 +280,11 @@ class TCNTrainer(BaseTrainer):
                         if len(estimated_intervals) == 0:
                             continue
 
-                        gt_boundary_ticks = np.where(
-                            boundaries_target.cpu().numpy() > 0.5
-                        )[0]
+                        gt_boundary_ticks = [int(x) for x in batch.get('segment_ticks_in_piano_roll')]
+                        # add one tick beyond the end for stacking purposes
+                        if gt_boundary_ticks and gt_boundary_ticks[-1] != t_max + 1:
+                            gt_boundary_ticks.append(t_max + 1)
+
                         if len(gt_boundary_ticks) < 2:
                             continue
 
@@ -313,40 +292,39 @@ class TCNTrainer(BaseTrainer):
                             (gt_boundary_ticks[:-1], gt_boundary_ticks[1:])
                         )
 
+                        try:
                         # Boundary detection metrics
-                        boundary_prec, boundary_recall, boundary_f1 = (
-                            mir_eval.segment.detection(
-                                reference_intervals=reference_intervals,
-                                estimated_intervals=estimated_intervals,
+                            boundary_prec, boundary_recall, boundary_f1 = (
+                                mir_eval.segment.detection(
+                                    reference_intervals=reference_intervals,
+                                    estimated_intervals=estimated_intervals,
+                                )
                             )
-                        )
-                        total_boundary_prec += boundary_prec
-                        total_boundary_recall += boundary_recall
-                        total_boundary_f1 += boundary_f1
-                        num_boundary_batches += 1
+
+                            total_boundary_prec += boundary_prec
+                            total_boundary_recall += boundary_recall
+                            total_boundary_f1 += boundary_f1
+                            num_boundary_batches += 1
+
+                        except Exception as e:
+                            print(f'Exception computing boundary metrics, {e}')
+                            print('estimated intervals:', estimated_intervals)
+                            print('ref int:', reference_intervals)
+                            print('file', batch['file_id'])
+
 
                         # Pairwise metrics (requires labels)
                         if (
                             "segment_label_activations" in targets
                             and len(gt_boundary_ticks) > 1
                         ):
-                            gt_label_indices = (
-                                targets["segment_label_activations"]
-                                .squeeze(0)
-                                .cpu()
-                                .numpy()[gt_boundary_ticks[:-1]]
-                            )
-                            gt_labels = [
-                                self.label_map[idx] for idx in gt_label_indices
-                            ]
 
-                            t_max = max(
-                                reference_intervals[-1, 1], estimated_intervals[-1, 1]
-                            )
+                            gt_labels = [str(x[0]) for x in batch.get('segment_labels_in_piano_roll')]
 
+                            # Shouldn't need to do this?
                             reference_intervals_adj, reference_labels = (
                                 mir_eval.util.adjust_intervals(
-                                    reference_intervals, gt_labels, t_min=0, t_max=t_max
+                                    reference_intervals, gt_labels, t_min=0, t_max=t_max + 1
                                 )
                             )
 
@@ -358,14 +336,37 @@ class TCNTrainer(BaseTrainer):
                                     estimated_intervals,
                                     predicted_labels,
                                     t_min=0,
-                                    t_max=t_max,
+                                    t_max=t_max + 1,
                                 )
                             )
 
-                            if len(reference_intervals_adj) != len(
-                                reference_labels
-                            ) or len(estimated_intervals_adj) != len(predicted_labels):
-                                continue
+                            assert reference_intervals_adj.shape == reference_intervals.shape
+                            assert (reference_intervals_adj == reference_intervals).all()
+                            # if reference_intervals_adj.shape != reference_intervals.shape or not (reference_intervals_adj == reference_intervals).all():
+                            #     print('yikes')
+                            #     print('file', batch['file_id'])
+                            #     print(reference_intervals_adj)
+                            #     print(reference_intervals)
+                            assert estimated_intervals_adj.shape == estimated_intervals.shape
+                            assert (estimated_intervals_adj == estimated_intervals).all()
+                            # if estimated_intervals_adj.shape != estimated_intervals.shape or not (estimated_intervals_adj == estimated_intervals).all():
+                            #     print('yikes 2')
+                            #     print('file', batch['file_id'])
+                            #     print(estimated_intervals_adj)
+                            #     print(estimated_intervals)
+                            #     print(reference_intervals_adj)
+                            #     print(reference_intervals)
+                            #     print(gt_labels)
+                            assert len(reference_intervals_adj) == len(reference_labels)
+                            assert len(estimated_intervals_adj) == len(predicted_labels)
+                            # if len(reference_intervals_adj) != len(reference_labels) or len(estimated_intervals_adj) != len(predicted_labels):
+                            #     print('yikes3')
+                            #     print('file', batch['file_id'])
+                            #     print(len(reference_intervals_adj), len(reference_labels))
+                            #     print(reference_intervals_adj)
+                            #     print(reference_labels)
+                            #     print(len(estimated_intervals_adj), len(predicted_labels))
+                            #     continue
 
                             try:
                                 pairwise_prec, pairwise_recall, pairwise_f1 = (
@@ -375,7 +376,8 @@ class TCNTrainer(BaseTrainer):
                                         estimated_intervals=estimated_intervals_adj,
                                         estimated_labels=predicted_labels,
                                         frame_size=(
-                                            (0.1 / 0.5) * self.cfg.target_ticks_per_beat
+                                            # (0.1 / 0.5) * self.cfg.target_ticks_per_beat
+                                            1.0
                                         ),
                                     )
                                 )

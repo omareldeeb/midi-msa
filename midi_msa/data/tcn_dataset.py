@@ -102,8 +102,9 @@ class TCNMidiDataset(BaseMidiDataset):
         except Exception as e:
             print(f"Error computing piano roll for {midi_path}: {e}")
             return None
-        
-        return torch.from_numpy(piano_roll)
+
+        piano_roll['piano_roll'] = torch.from_numpy(piano_roll['piano_roll'])
+        return piano_roll
 
     def _precompute_piano_roll_cache(self):
         """Precompute and cache all piano rolls."""
@@ -167,16 +168,21 @@ class TCNMidiDataset(BaseMidiDataset):
         cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
         if cache_path and cache_path.exists():
             # Load cached piano roll
-            piano_roll = torch.load(cache_path)
+            piano_roll_dict = torch.load(cache_path)
+
         else:
             # Compute piano roll
-            piano_roll = self._compute_piano_roll(file_id)
-            if piano_roll is None:
+            piano_roll_dict = self._compute_piano_roll(file_id)
+            if piano_roll_dict is None:
                 return self._get_empty_sample()
 
             # Save to cache if caching is enabled
             if cache_path:
-                torch.save(piano_roll, cache_path)
+                torch.save(piano_roll_dict, cache_path)
+
+        measure_ticks = piano_roll_dict['measure_ticks']
+        time_signatures = piano_roll_dict['time_signatures']
+        piano_roll = piano_roll_dict['piano_roll']
 
         if self.transpose_augmentation:
             piano_roll = self.apply_transpose_augmentation(piano_roll)
@@ -256,62 +262,49 @@ class TCNMidiDataset(BaseMidiDataset):
         sample["piano_roll"] = piano_roll
 
         # Add measure ticks
-        measure_ticks = None
-        if file_id in self.measures_qn:
-            measure_qns = self.measures_qn[file_id]
-            measure_ticks = [int(round(qn * self.target_ticks_per_beat)) for qn in measure_qns]
-            measure_ticks = [min(tick, num_time_frames - 1) for tick in measure_ticks]
-
-            sample["measure_ticks"] = torch.tensor(measure_ticks, dtype=torch.long)
+        sample["measure_ticks"] = torch.tensor(measure_ticks, dtype=torch.long)
         
         # Load annotations
         with open(annotation_path, "r") as f:
             annotations = json.load(f)
             annotations = preprocess_labels(annotations)
 
-        # Convert quarter note positions to tick positions
         segment_qns = [ann[0] for ann in annotations]
         segment_labels = [ann[1] for ann in annotations]
-        
+        if segment_qns and segment_qns[0] != 0:
+            segment_qns = [0] + segment_qns
+            segment_labels = ['Start'] + segment_labels
+
         # Adjust for target ticks per beat
         segment_ticks = [int(round(qn * self.target_ticks_per_beat)) for qn in segment_qns]
-        segment_ticks = [min(tick, num_time_frames - 1) for tick in segment_ticks]
-        
+
+        # Crop annotations to piano roll window
+        activation_segment_ticks = []
+        activation_segment_labels = []
+        for tick, label in zip(segment_ticks, segment_labels):
+            if tick < num_time_frames:
+                activation_segment_ticks.append(tick)
+                activation_segment_labels.append(label)
+        sample['segment_ticks_in_piano_roll'] = activation_segment_ticks
+        sample['segment_labels_in_piano_roll'] = activation_segment_labels
+
         # Compute segment boundary activation
         if self.compute_segments:
-            # Remove "End" markers for boundary detection
             segment_activation = torch.zeros(num_time_frames, dtype=torch.float32)
-            segment_activation[segment_ticks] = 1.0
+            segment_activation[activation_segment_ticks] = 1.0
             segment_activation = widen_temporal_events(segment_activation, num_neighbors=2)
             sample["segment_activation"] = segment_activation
 
-            # Create segment function labels
-            segment_functions = []
-            for label in segment_labels:
-                if label != "End":
-                    function = label.split(";")[0].strip()
-                    segment_functions.append(function)
-            
             # Create segment label activations (for each frame, which segment it belongs to)
             segment_label_activations = self._create_segment_label_activations(
-                segment_ticks, segment_labels, num_time_frames
+                activation_segment_ticks, activation_segment_labels, num_time_frames
             )
             sample["segment_label_activations"] = segment_label_activations
         
         # Compute beat and downbeat activations from measures
         if (self.compute_beats or self.compute_downbeats) and measure_ticks:
             if self.compute_beats:
-                # Get time signature from midi
-                midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-                _, ticks_per_beat, time_signatures = parse_midi(midi_path)
-                time_signatures = [
-                    (
-                        int(round(tick_pos * self.target_ticks_per_beat / ticks_per_beat)),
-                        numerator,
-                        denominator,
-                    )
-                    for tick_pos, numerator, denominator in time_signatures
-                ]
+
                 # Use actual time signature from MIDI file to add beats between measures
                 beat_ticks = []
                 for i in range(len(measure_ticks) - 1):
@@ -342,10 +335,12 @@ class TCNMidiDataset(BaseMidiDataset):
             
             if self.compute_downbeats:
                 downbeat_activation = torch.zeros(num_time_frames, dtype=torch.float32)
-                downbeat_activation[measure_ticks] = 1.0
+                downbeat_measure_ticks = [x for x in measure_ticks if x < num_time_frames]
+                downbeat_activation[downbeat_measure_ticks] = 1.0
                 downbeat_activation = widen_temporal_events(downbeat_activation, num_neighbors=1)
                 sample["downbeat_activation"] = downbeat_activation
 
+        sample['file_id'] = file_id
         return sample
     
     def _create_segment_label_activations(
@@ -357,20 +352,16 @@ class TCNMidiDataset(BaseMidiDataset):
         """Create frame-wise segment function labels."""
         segment_label_activations = torch.zeros(num_time_frames, dtype=torch.long)
 
-        if len(segment_ticks) > 0 and segment_ticks[0] != 0:
-            segment_ticks = [0] + segment_ticks
-            segment_labels = ["Start"] + segment_labels
-        if len(segment_ticks) > 0 and segment_ticks[-1] != num_time_frames - 1:
-            segment_ticks = segment_ticks + [num_time_frames - 1]
-            segment_labels = segment_labels + ["End"]
+        assert len(segment_ticks) == len(segment_labels), "segment_ticks and segment_labels have unequal sizes"
 
         # Process segments
-        for i in range(len(segment_labels) - 1):
+        for i in range(len(segment_labels)):
             start_tick = segment_ticks[i]
-            end_tick = segment_ticks[i + 1]
+            end_tick = segment_ticks[i + 1] if i < len(segment_labels) - 1 else num_time_frames
             
             # Extract function and find its index in vocabulary
-            function = segment_labels[i].split(";")[0].strip()
+            # function = segment_labels[i].split(";")[0].strip()
+            function = segment_labels[i]
             if function in self.segment_function_vocab:
                 class_idx = self.segment_function_vocab.index(function)
                 segment_label_activations[start_tick:end_tick] = class_idx

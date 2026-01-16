@@ -164,7 +164,8 @@ def create_piano_roll_fast(path_to_midi_file,
                            target_ticks_per_beat=4,
                            max_target_ticks=40960,
                            clip=True,
-                           normalize=False):
+                           normalize=False,
+                           compute_measure_ticks=True):
     def get_avg_cc_7_and_cc_11_by_click(tr: ms.Track) -> dict[int, dict[int, float]]:
         to_avg = {7: collections.defaultdict(list),
                   11: collections.defaultdict(list)}
@@ -189,23 +190,38 @@ def create_piano_roll_fast(path_to_midi_file,
 
     S = ms.MidiSong.from_midi_file(path_to_file=path_to_midi_file, clean_up_time_signatures=False)
     S.apply_pedals_to_extend_note_lengths()
-    S.remove_pedals()
+    # S.remove_pedals()
 
-    S = ms.MidiSongByMeasure.from_MidiSong(S, consume_calling_song=True)
-    S.quantize_notes_by_measure(q=(target_ticks_per_beat,))
+    # S = ms.MidiSongByMeasure.from_MidiSong(S, consume_calling_song=True)
+    # S.quantize_notes_by_measure(q=(target_ticks_per_beat,))
+    # S.change_cpq(to_cpq=target_ticks_per_beat)
+
+    S.quantize_notes(q=(target_ticks_per_beat, ))
     S.change_cpq(to_cpq=target_ticks_per_beat)
 
     num_pitches = 12 if chroma else 128
 
     # could add another 4 * target_ticks_per_beat for safety
-    duration_ticks = S.get_measure_endpoints(make_copy=False)[-1]
+    # duration_ticks = S.get_measure_endpoints(make_copy=False)[-1]
+    # measure_ticks = S.get_measure_endpoints(make_copy=True)
+
+    duration_ticks = 1
+    for t in S.tracks:
+        for n in t.notes:
+            if n.click == n.end:
+                duration_ticks = max(duration_ticks, n.end + 1)
+            else:
+                duration_ticks = max(duration_ticks, n.end)
+
+    # print('here', S.cpq, S.max_click_on_init, S.get_max_click(), duration_ticks)
 
     if duration_ticks > max_target_ticks:
         raise OverflowError(f"File {path_to_midi_file} has {duration_ticks} ticks "
                             f"(at {target_ticks_per_beat} ticks per beat), which is too large. "
                             f"Increase max_target_ticks to avoid this error.")
 
-    S = ms.MidiSong.from_MidiSongByMeasure(S, consume_calling_song=True, clean_up_time_signatures=False)
+    # S = ms.MidiSong.from_MidiSongByMeasure(S, consume_calling_song=True, clean_up_time_signatures=False)
+    time_sigs = [(t.click, t.num, t.denom) for t in S.time_signatures]
 
     # ch 0: raw piano roll, ch 1: piano roll w/cc modifications, ch 2: overtones based on ch 1, ch 3: drums
     piano_roll = np.zeros((4, num_pitches, duration_ticks))
@@ -250,13 +266,23 @@ def create_piano_roll_fast(path_to_midi_file,
         for i in range(piano_roll.shape[0]):
             piano_roll[i] = normalize_channel(piano_roll[i])
 
+    if compute_measure_ticks:
+        S.remove_pedals()
+        S = ms.MidiSongByMeasure.from_MidiSong(S, consume_calling_song=True)
+        measure_ticks = S.get_measure_endpoints(make_copy=False)
+    else:
+        measure_ticks = None
+
     # now consolidate our 4 channels to form our output
     # Always return 3 channels: non-drums, overtones, drums
-    return np.stack([
-        piano_roll[1],
-        piano_roll[2],
-        piano_roll[3]
-    ])
+    res = {'piano_roll': np.stack([piano_roll[1],
+                                   piano_roll[2],
+                                   piano_roll[3]]),
+           'time_signatures': time_sigs,
+           'measure_ticks': measure_ticks
+           }
+
+    return res
 
 
 OVERTONES = {
@@ -1335,10 +1361,10 @@ def compute_sslms_from_piano_roll(piano_roll: torch.Tensor, L: int) -> Tuple[tor
 def compute_sslms_from_midi_path(p, target_ticks_per_beat):
     piano_roll = create_piano_roll_fast(path_to_midi_file=p,
                                         target_ticks_per_beat=12,
-                                        max_target_ticks=9999999999999999999)
+                                        max_target_ticks=9999999999999999999)['piano_roll']
     piano_roll_2 = create_piano_roll_fast(path_to_midi_file=p,
                                           target_ticks_per_beat=target_ticks_per_beat,
-                                          max_target_ticks=9999999999999999999)
+                                          max_target_ticks=9999999999999999999)['piano_roll']
 
     piano_roll_pt = torch.tensor(piano_roll)
     L = 12 * int((90 / 0.5))

@@ -276,7 +276,7 @@ class DatasetVisualizer:
                 # Store output for later use in functional label visualization
                 self.current_output = output
 
-                predicted_boundary_ticks, predicted_label_indices = self.model.compute_predictions(output=output, measure_ticks=measure_ticks)
+                predicted_boundary_ticks, predicted_label_indices = self.model.compute_predictions_for_visualization(output=output, measure_ticks=measure_ticks)
                 print(f"Predicted labels: {[self.segment_function_vocab[idx] for idx in predicted_label_indices]}")
 
                 # Get segment boundary predictions and apply sigmoid

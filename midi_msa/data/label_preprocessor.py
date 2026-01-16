@@ -4,20 +4,24 @@ import json
 
 LABEL_MAP = {
     "Intro": "Intro",
-    "Outro": "Outro",
-    "Verse": "Verse",
-    "Pre-Chorus": "Pre-Chorus",
-    "Chorus": "Chorus",
-    "Bridge": "Bridge",
-    "Solo": "Solo",
 
+    "Outro": "Outro",
+    "Coda": "Outro",
+
+    "Verse": "Verse",
+    "Pre-Chorus": "Verse",
+
+    "Chorus": "Chorus",
+    "Post-Chorus": "Chorus",
+
+    "Bridge": "Bridge",
+    "Transition": "Bridge",
+
+    "Solo": "Instrumental",
     "Pre-Verse": "Instrumental",
-    "Post-Chorus": "Instrumental",
     "Instrumental": "Instrumental",
     "Interlude": "Instrumental",
-    "Transition": "Instrumental",
 
-    "Coda": "Outro",
     "End": "End",
     "Start": "Start",
 }
@@ -50,7 +54,7 @@ def _process_bridge_to_chorus(L: list[tuple[int, float, str]]) -> list[tuple[int
     counter = collections.Counter()
     for i, t, label in L:
         counter[label] += 1
-    if counter['Verse'] >= 1 and counter['Bridge'] >= 2 and counter['Pre-Chorus'] == 0 and counter['Chorus'] == 0 and \
+    if counter['Verse'] >= 1 and counter['Bridge'] >= 1 and counter['Pre-Chorus'] == 0 and counter['Chorus'] == 0 and \
             counter['Post-Chorus'] == 0:
         for i, t, label in L:
             if label == 'Bridge':
@@ -80,7 +84,8 @@ def preprocess_labels(L: list[list[float | str]], remove_consecutive_identical=F
         label: str
         label = label.split(';')[0].split(' + ')[0]
         if label != 'Fadeout':
-            working_labels.append((i, t, label))
+            if label != "End":  # discard End label too!
+                working_labels.append((i, t, label))
 
     # Change pre-verse to intro if intro is the only label seen so far (reading left to right).
     # (This is why we don't apply the simplifying label map yet.)
