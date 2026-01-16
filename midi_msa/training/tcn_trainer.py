@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torcheval.metrics.functional import multiclass_f1_score
 from tqdm import tqdm
 
 from ..data.label_preprocessor import LABEL_MAP
@@ -222,6 +223,7 @@ class TCNTrainer(BaseTrainer):
         total_pairwise_prec = 0.0
         total_pairwise_recall = 0.0
         total_pairwise_f1 = 0.0
+        total_label_f1 = {label: 0.0 for label in self.label_map}
         num_boundary_batches = 0
 
         with torch.no_grad():
@@ -252,6 +254,31 @@ class TCNTrainer(BaseTrainer):
                 total_loss += losses["total_loss"].item()
                 num_batches += 1
                 t_max = piano_rolls.shape[-1] - 1
+
+                # Compute F1 for function labels
+                if outputs.function_outputs is not None and "segment_label_activations" in targets:
+                    predicted_label_probabilities = torch.softmax(
+                        outputs.function_outputs.squeeze(), dim=-2
+                    ).argmax(dim=-2)
+
+                    true_labels = targets["segment_label_activations"].squeeze()
+
+                    predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
+                    true_labels_flat = true_labels.view(-1)
+
+                    f1 = multiclass_f1_score(
+                        predicted_label_probabilities_flat,
+                        true_labels_flat,
+                        num_classes=len(self.label_map),
+                        average=None,
+                    )
+
+                    unique_labels = torch.unique(true_labels_flat)
+                    for label_idx, label in enumerate(self.label_map):
+                        if label_idx in unique_labels:
+                            label_f1 = f1[label_idx].item()
+                            total_label_f1[label] += label_f1
+
 
                 # Compute boundary and pairwise metrics
                 if measure_ticks is not None and "segment_activation" in targets:
@@ -401,6 +428,8 @@ class TCNTrainer(BaseTrainer):
             metrics["pairwise_precision"] = total_pairwise_prec / num_boundary_batches
             metrics["pairwise_recall"] = total_pairwise_recall / num_boundary_batches
             metrics["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
+            for label in self.label_map:
+                metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
 
         return metrics
 
