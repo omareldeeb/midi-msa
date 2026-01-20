@@ -5,20 +5,21 @@ method: tcn
 num_epochs: 50
 lr: 1e-3
 weight_decay: 1e-4
-early_stopping_patience: 10
+early_stopping_patience: 20
 
 # TCN model parameters
-tcn_layers: 2
+tcn_layers: 11
 tcn_kernel_size: 5
 conv_filters: 20
 
 # Task configuration
-compute_beats: false
-compute_downbeats: false
+compute_beats: true
+compute_downbeats: true
 compute_segments: true
 
 # Loss weights
 beat_loss_weight: 1.0
-downbeat_loss_weight: 3.0
-section_loss_weight: 10.0
+downbeat_loss_weight: 1.0
+section_loss_weight: 3.0
 function_loss_weight: 1.0
+contrastive_loss_weight: 0.1
