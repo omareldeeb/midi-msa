@@ -326,7 +326,7 @@ class TCNMidiDataset(BaseMidiDataset):
                     beat_interval = (end_tick - start_tick) / num_beats
                     for j in range(num_beats):
                         beat_ticks.append(start_tick + int(round(j * beat_interval)))
-                    beat_ticks = [min(tick, num_time_frames - 1) for tick in beat_ticks]
+                    beat_ticks = [tick for tick in beat_ticks if tick < num_time_frames]
                 
                 beat_activation = torch.zeros(num_time_frames, dtype=torch.float32)
                 beat_activation[beat_ticks] = 1.0
