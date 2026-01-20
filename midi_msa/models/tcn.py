@@ -12,6 +12,7 @@ class TCNOutput:
     downbeat_output: torch.Tensor
     segment_output: torch.Tensor
     function_outputs: torch.Tensor
+    segment_embeddings: torch.Tensor
 
 class TCNBlock(nn.Module):
     def __init__(
@@ -97,7 +98,15 @@ class TCNFrontend(nn.Module):
             ),
             nn.ELU(),
             nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+            # nn.AvgPool2d(conv_pool_size),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(5, 1),
+                stride=(5, 1),
+                padding=0,
+                groups=out_channels
+            ),
 
             nn.Conv2d(
                 in_channels=out_channels,
@@ -107,7 +116,15 @@ class TCNFrontend(nn.Module):
             ),
             nn.ELU(),
             nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+            # nn.AvgPool2d(conv_pool_size),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(5, 1),
+                stride=(5, 1),
+                padding=0,
+                groups=out_channels
+            ),
 
             nn.Conv2d(
                 in_channels=out_channels,
@@ -117,11 +134,19 @@ class TCNFrontend(nn.Module):
             ),
             nn.ELU(),
             nn.Dropout(conv_dropout_rate),
-            nn.MaxPool2d(conv_pool_size),
+            # nn.AvgPool2d(conv_pool_size),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(5, 1),
+                stride=(5, 1),
+                padding=0,
+                groups=out_channels
+            ),
         )
 
     def forward(self, x):
-        return self.net(x)
+        return self.net(x)  # (1, conv_filters, time)
 
 
 class TCN(nn.Module):
@@ -130,7 +155,7 @@ class TCN(nn.Module):
     CONV_KERNEL_SIZE: Tuple[int, int] = (5, 5)
     CONV_DROPOUT_RATE: float = 0.15
     CONV_POOL_SIZE: Tuple[int, int] = (5, 1)
-    FREQUENCY_CONV_KERNEL_SIZE: Tuple[int, int] = (10, 1)
+    FREQUENCY_CONV_KERNEL_SIZE: Tuple[int, int] = (12, 1)
     TCN_LAYERS: int = 2
     TCN_KERNEL_SIZE: int = 5
 
@@ -224,6 +249,11 @@ class TCN(nn.Module):
             nn.Linear(conv_filters, len(segment_function_vocab)),
         )
 
+        self.segment_embedding = nn.Sequential(
+            nn.Dropout(conv_dropout_rate),
+            nn.Linear(conv_filters, 32)
+        )
+
         # Init confidences
         self.beat_output[-1].bias.data.fill_(-torch.log(torch.tensor(4 - 1)))
         self.downbeat_output[-1].bias.data.fill_(-torch.log(torch.tensor(16 - 1)))
@@ -257,11 +287,14 @@ class TCN(nn.Module):
         segment_output = self.segment_boundary_output(x).permute(0, 2, 1).squeeze(-2)
         function_outputs = self.segment_function_output(x).permute(0, 2, 1)
 
+        segment_embeddings = self.segment_embedding(x).permute(0, 2, 1)  # (N, 32, T)
+
         return TCNOutput(
             beat_output=beat_output,
             downbeat_output=downbeat_output,
             segment_output=segment_output,
-            function_outputs=function_outputs
+            function_outputs=function_outputs,
+            segment_embeddings=segment_embeddings,
         )
 
     def compute_predictions_for_visualization(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:

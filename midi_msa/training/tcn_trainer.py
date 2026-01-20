@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from torcheval.metrics.functional import multiclass_f1_score
 from tqdm import tqdm
 
+from ..data import utils
 from ..data.label_preprocessor import LABEL_MAP
 from ..data.tcn_dataset import TCNMidiDataset
 from .base_trainer import BaseTrainer
@@ -27,7 +28,7 @@ class TCNTrainer(BaseTrainer):
         self.label_map = sorted(list(set(LABEL_MAP.values())))
 
     def lower_is_better(self) -> bool:
-        return True  # Loss should be minimized
+        return False  # validation metric should be maximized
 
     def get_dataloaders(self) -> Tuple:
         """Create dataloaders for TCN training."""
@@ -111,7 +112,52 @@ class TCNTrainer(BaseTrainer):
 
         return train_loader, (val_loader,)
 
-    def compute_loss(self, model_output, targets: Dict[str, torch.Tensor]) -> Dict:
+    def pool_segments(self, embeddings, boundaries):
+        """
+        embeddings: (D, T)
+        boundaries: list[int] sorted, including 0
+        returns: (D, num_segments)
+        """
+        pooled = []
+        for i, start in enumerate(boundaries):
+            end = boundaries[i + 1] if i + 1 < len(boundaries) else embeddings.shape[-1]
+            if end > start:
+                pooled.append(embeddings[:, start: end].mean(dim=1))
+        return torch.stack(pooled)
+
+    def nt_xent_loss(self, embeddings, boundaries, labels, temperature=0.1):
+        embeddings = embeddings.squeeze(0)  # (D, T)
+        segment_embeddings = self.pool_segments(embeddings, boundaries)  # (D, #segments)
+        z = segment_embeddings
+
+        z = nn.functional.normalize(z, dim=0)
+        sim = torch.matmul(z, z.T) / temperature  # (S, S)
+        sim_max, _ = sim.max(dim=1, keepdim=True)
+        sim = sim - sim_max  # numerical stability
+
+        labels = torch.tensor([self.label_map.index(x) for x in labels], device=sim.device)
+        mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # positives
+        # pos_counts = mask.sum(dim=1)
+        # valid = pos_counts > 0
+        # if valid.sum() == 0:
+        #     return torch.tensor(0, device=embeddings.device, requires_grad=True)
+
+        # remove self-comparisons
+        diag = torch.eye(sim.size(0), device=sim.device).bool()
+        mask = mask & ~diag
+
+        exp_sim = torch.exp(sim)
+        denom = exp_sim.sum(dim=1)
+        pos = exp_sim * mask
+        valid_rows = pos.sum(dim=1) > 0
+        if valid_rows.sum() == 0:
+            return torch.tensor(0.0, device=segment_embeddings.device)
+
+        loss = -torch.log((pos.sum(dim=1)[valid_rows] + 1e-8) / denom[valid_rows])
+
+        return loss.mean()
+
+    def compute_loss(self, model_output, targets: Dict[str, torch.Tensor], batch) -> Dict:
         """Compute multi-task losses."""
         losses = {}
         weighted_losses = {}
@@ -154,7 +200,17 @@ class TCNTrainer(BaseTrainer):
                 function_loss * self.cfg.function_loss_weight
             )
 
+            if self.cfg.contrastive_loss_weight > 0:
+                losses['contrastive_loss'] = self.nt_xent_loss(embeddings=model_output.segment_embeddings,
+                                                      boundaries=[int(x) for x in batch.get('segment_ticks_in_piano_roll')],
+                                                      labels=[str(x[0]) for x in batch.get('segment_labels_in_piano_roll')])
+                weighted_losses['contrastive_loss'] = 0.1 * losses.get('contrastive_loss')
+            else:
+                losses['contrastive_loss'] = 0.0
+                weighted_losses['contrastive_loss'] = 0.0
+
         total_loss = sum(weighted_losses.values())
+
         losses["total_loss"] = total_loss
 
         return losses
@@ -186,7 +242,7 @@ class TCNTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             outputs = self.model(piano_rolls, sslm_near=sslm_near, sslm_far=sslm_far)
 
-            losses = self.compute_loss(outputs, targets)
+            losses = self.compute_loss(outputs, targets, batch)
 
             losses["total_loss"].backward()
 
@@ -217,6 +273,8 @@ class TCNTrainer(BaseTrainer):
         num_batches = 0
 
         # Metrics accumulators
+        total_beat_f1 = 0.0
+        total_downbeat_f1 = 0.0
         total_boundary_prec = 0.0
         total_boundary_recall = 0.0
         total_boundary_f1 = 0.0
@@ -224,6 +282,7 @@ class TCNTrainer(BaseTrainer):
         total_pairwise_recall = 0.0
         total_pairwise_f1 = 0.0
         total_label_f1 = {label: 0.0 for label in self.label_map}
+        total_label_accuracy = 0.0
         num_boundary_batches = 0
 
         with torch.no_grad():
@@ -249,36 +308,59 @@ class TCNTrainer(BaseTrainer):
                 outputs = self.model(
                     piano_rolls, sslm_near=sslm_near, sslm_far=sslm_far
                 )
-                losses = self.compute_loss(outputs, targets)
+                losses = self.compute_loss(outputs, targets, batch)
 
                 total_loss += losses["total_loss"].item()
                 num_batches += 1
                 t_max = piano_rolls.shape[-1] - 1
 
                 # Compute F1 for function labels
-                if outputs.function_outputs is not None and "segment_label_activations" in targets:
-                    predicted_label_probabilities = torch.softmax(
-                        outputs.function_outputs.squeeze(), dim=-2
-                    ).argmax(dim=-2)
+                # if outputs.function_outputs is not None and "segment_label_activations" in targets:
+                #     predicted_label_probabilities = torch.softmax(
+                #         outputs.function_outputs.squeeze(), dim=-2
+                #     ).argmax(dim=-2)
+                #
+                #     true_labels = targets["segment_label_activations"].squeeze()
+                #
+                #     predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
+                #     true_labels_flat = true_labels.view(-1)
+                #
+                #     f1 = multiclass_f1_score(
+                #         predicted_label_probabilities_flat,
+                #         true_labels_flat,
+                #         num_classes=len(self.label_map),
+                #         average=None,
+                #     )
+                #
+                #     unique_labels = torch.unique(true_labels_flat)
+                #     for label_idx, label in enumerate(self.label_map):
+                #         if label_idx in unique_labels:
+                #             label_f1 = f1[label_idx].item()
+                #             total_label_f1[label] += label_f1
 
-                    true_labels = targets["segment_label_activations"].squeeze()
+                # Compute beat f1
+                # Only compute for single samples (batch_size=1)
+                if 'beat_activation' in targets and targets['beat_activation'].shape[0] == 1:
+                    true_beats = torch.where(targets['beat_activation'].squeeze() == 1.0)[0]
+                    predicted_beats = utils.extract_peaks(outputs.beat_output.squeeze())
+                    relevant = set(x.item() for x in true_beats)
+                    retrieved = set(x.item() for x in predicted_beats)
+                    beat_f1 = utils.generic_F1(numerator=len(relevant.intersection(retrieved)),
+                                               n_relevant=len(relevant),
+                                               n_retrieved=len(retrieved))
+                    total_beat_f1 += beat_f1
 
-                    predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
-                    true_labels_flat = true_labels.view(-1)
-
-                    f1 = multiclass_f1_score(
-                        predicted_label_probabilities_flat,
-                        true_labels_flat,
-                        num_classes=len(self.label_map),
-                        average=None,
-                    )
-
-                    unique_labels = torch.unique(true_labels_flat)
-                    for label_idx, label in enumerate(self.label_map):
-                        if label_idx in unique_labels:
-                            label_f1 = f1[label_idx].item()
-                            total_label_f1[label] += label_f1
-
+                # Compute downbeat f1
+                # Only compute for single samples (batch_size=1)
+                if 'downbeat_activation' in targets and targets['downbeat_activation'].shape[0] == 1:
+                    true_downbeats = torch.where(targets['downbeat_activation'].squeeze() == 1.0)[0]
+                    predicted_downbeats = utils.extract_peaks(outputs.downbeat_output.squeeze())
+                    relevant = set(x.item() for x in true_downbeats)
+                    retrieved = set(x.item() for x in predicted_downbeats)
+                    downbeat_f1 = utils.generic_F1(numerator=len(relevant.intersection(retrieved)),
+                                                   n_relevant=len(relevant),
+                                                   n_retrieved=len(retrieved))
+                    total_downbeat_f1 += downbeat_f1
 
                 # Compute boundary and pairwise metrics
                 if measure_ticks is not None and "segment_activation" in targets:
@@ -414,6 +496,14 @@ class TCNTrainer(BaseTrainer):
                             except ValueError as err:
                                 print(f'Warning: Error in mir_eval.segment.pairwise: {err}')
 
+                            # compute tick-wise label accuracy
+                            true_segment_label_idxs = targets['segment_label_activations'][0]
+                            predicted_label_idxs = torch.argmax(outputs.function_outputs[0], dim=0)
+                            accuracy = sum(true_segment_label_idxs == predicted_label_idxs) / piano_rolls.shape[-1]
+                            accuracy = accuracy.item()
+                            total_label_accuracy += accuracy
+
+
                 pbar.set_postfix({
                     "batch_loss": losses["total_loss"].item(),
                     "avg_loss": total_loss / num_batches,
@@ -422,19 +512,23 @@ class TCNTrainer(BaseTrainer):
         metrics = {"loss": total_loss / num_batches}
 
         if num_boundary_batches > 0:
+            metrics['beat_f1'] = total_beat_f1 / num_boundary_batches
+            metrics['downbeat_f1'] = total_downbeat_f1 / num_boundary_batches
             metrics["boundary_precision"] = total_boundary_prec / num_boundary_batches
             metrics["boundary_recall"] = total_boundary_recall / num_boundary_batches
             metrics["boundary_f1"] = total_boundary_f1 / num_boundary_batches
             metrics["pairwise_precision"] = total_pairwise_prec / num_boundary_batches
             metrics["pairwise_recall"] = total_pairwise_recall / num_boundary_batches
             metrics["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
-            for label in self.label_map:
-                metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
-            # Average label F1
-            metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in self.label_map])
+            # for label in self.label_map:
+            #     metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
+            # # Average label F1
+            # metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in self.label_map])
+            metrics['label_accuracy'] = total_label_accuracy / num_boundary_batches
+            metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['pairwise_f1']) / 2
 
         return metrics
 
     def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
         """Use validation loss for early stopping."""
-        return val_metrics["loss"]
+        return val_metrics["primary_optimization_metric"]

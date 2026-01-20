@@ -112,7 +112,7 @@ class TCNConfig(BaseConfig):
     downbeat_loss_weight: float = 3.0
     section_loss_weight: float = 10.0
     function_loss_weight: float = 1.0
-
+    contrastive_loss_weight: float = 0.0
 
 def register_configs():
     """Register structured configs with Hydra."""

@@ -1485,3 +1485,45 @@ def widen_temporal_events(events, num_neighbors=2):
         widen_events[neighbor_indices] *= 0.5
 
     return widen_events
+
+def extract_peaks(events, threshold=0.5):
+    device = events.device
+    padded = torch.cat((torch.tensor([-float('inf')], device=device),
+                        events,
+                        torch.tensor([-float('inf')], device=device)))
+    b_exceeds_threshold = events > threshold
+    b_exceeds_left_neighbor = events > padded[:-2]
+    b_exceeds_right_neighbor = events > padded[2:]
+    return torch.where(b_exceeds_threshold & b_exceeds_left_neighbor & b_exceeds_right_neighbor)[0]
+
+
+def generic_precision(numerator, n_retrieved):
+    if n_retrieved == 0:
+        return 0
+    else:
+        return numerator/n_retrieved
+
+
+def generic_recall(numerator, n_relevant):
+    if n_relevant == 0:
+        return None
+    else:
+        return numerator / n_relevant
+
+
+def generic_F1(numerator, n_relevant, n_retrieved):
+    recall = generic_recall(numerator=numerator, n_relevant=n_relevant)
+    precision = generic_precision(numerator=numerator, n_retrieved=n_retrieved)
+
+    if recall is None:  # if there are no relevant documents, F1 is None (undefined)
+        return None
+
+    denom = recall + precision
+    if denom == 0:
+        return 0
+
+    return 2 * precision * recall / denom
+
+
+
+
