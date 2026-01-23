@@ -37,7 +37,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             segment_function_vocab=segment_vocab,
             use_sslm_near=cfg.use_sslm_near,
             use_sslm_far=cfg.use_sslm_far,
-            conv_dropout_rate=cfg.dropout_rate,
+            dropout_rate=cfg.dropout_rate,
         )
     else:
         raise ValueError(f"Unknown method: {cfg.method}")

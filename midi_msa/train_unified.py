@@ -39,6 +39,13 @@ def main(cfg: DictConfig):
     print(f"\nMethod: {cfg.method}")
     print(f"Configuration:\n{OmegaConf.to_yaml(cfg)}\n")
 
+    try:
+        import wandb
+        run = wandb.init(config=OmegaConf.to_container(cfg, resolve=True))
+        wandb.define_metric("primary_optimization_metric", summary="max")
+    except ImportError:
+        pass
+
     # Set seed if specified
     if cfg.seed is not None:
         torch.manual_seed(cfg.seed)

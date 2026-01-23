@@ -101,6 +101,7 @@ class TCNConfig(BaseConfig):
     tcn_layers: int = 2
     tcn_kernel_size: int = 5
     conv_filters: int = 20
+    dropout_rate: float = 0.1
 
     # Task configuration
     compute_beats: bool = False

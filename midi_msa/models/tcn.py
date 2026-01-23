@@ -153,7 +153,7 @@ class TCN(nn.Module):
     PIANO_ROLL_CHANNELS: int = 3
     CONV_FILTERS: int = 20
     CONV_KERNEL_SIZE: Tuple[int, int] = (5, 5)
-    CONV_DROPOUT_RATE: float = 0.15
+    DROPOUT_RATE: float = 0.15
     CONV_POOL_SIZE: Tuple[int, int] = (5, 1)
     FREQUENCY_CONV_KERNEL_SIZE: Tuple[int, int] = (12, 1)
     TCN_LAYERS: int = 2
@@ -164,7 +164,7 @@ class TCN(nn.Module):
         piano_roll_channels: int = PIANO_ROLL_CHANNELS,
         conv_filters: int = CONV_FILTERS,
         conv_kernel_size: Tuple[int, int] = CONV_KERNEL_SIZE,
-        conv_dropout_rate: float = CONV_DROPOUT_RATE,
+        dropout_rate: float = DROPOUT_RATE,
         conv_pool_size: Tuple[int, int] = CONV_POOL_SIZE,
         frequency_conv_kernel_size: Tuple[int, int] = FREQUENCY_CONV_KERNEL_SIZE,
         tcn_layers: int = TCN_LAYERS,
@@ -184,7 +184,7 @@ class TCN(nn.Module):
             in_channels=piano_roll_channels,
             out_channels=conv_filters,
             conv_kernel_size=conv_kernel_size,
-            conv_dropout_rate=conv_dropout_rate,
+            conv_dropout_rate=dropout_rate,
             conv_pool_size=conv_pool_size,
             frequency_conv_kernel_size=frequency_conv_kernel_size,
         )
@@ -194,7 +194,7 @@ class TCN(nn.Module):
                 in_channels=1,
                 out_channels=conv_filters,
                 conv_kernel_size=conv_kernel_size,
-                conv_dropout_rate=conv_dropout_rate,
+                conv_dropout_rate=dropout_rate,
                 conv_pool_size=conv_pool_size,
                 frequency_conv_kernel_size=frequency_conv_kernel_size,
             )
@@ -203,7 +203,7 @@ class TCN(nn.Module):
                 in_channels=1,
                 out_channels=conv_filters,
                 conv_kernel_size=conv_kernel_size,
-                conv_dropout_rate=conv_dropout_rate,
+                conv_dropout_rate=dropout_rate,
                 conv_pool_size=conv_pool_size,
                 frequency_conv_kernel_size=frequency_conv_kernel_size,
             )
@@ -228,29 +228,29 @@ class TCN(nn.Module):
                     channels=conv_filters,
                     kernel_size=tcn_kernel_size,
                     dilation=2 ** i,
-                    dropout_rate=conv_dropout_rate
+                    dropout_rate=dropout_rate
                 )
             )
 
         self.beat_output = nn.Sequential(
-            nn.Dropout(conv_dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(conv_filters, 1),
         )
         self.downbeat_output = nn.Sequential(
-            nn.Dropout(conv_dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(conv_filters, 1),
         )
         self.segment_boundary_output = nn.Sequential(
-            nn.Dropout(conv_dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(conv_filters, 1),
         )
         self.segment_function_output = nn.Sequential(
-            nn.Dropout(conv_dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(conv_filters, len(segment_function_vocab)),
         )
 
         self.segment_embedding = nn.Sequential(
-            nn.Dropout(conv_dropout_rate),
+            nn.Dropout(dropout_rate),
             nn.Linear(conv_filters, 32)
         )
 
