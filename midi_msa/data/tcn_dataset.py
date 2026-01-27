@@ -114,7 +114,7 @@ class TCNMidiDataset(BaseMidiDataset):
         # Check which files need to be cached
         files_to_cache = []
         for file_id in self.midi_file_ids:
-            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
+            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
             if cache_path and not cache_path.exists():
                 files_to_cache.append(file_id)
 
@@ -124,7 +124,7 @@ class TCNMidiDataset(BaseMidiDataset):
 
         print(f"Caching {len(files_to_cache)} piano rolls...")
         for file_id in tqdm(files_to_cache, desc="Caching piano rolls"):
-            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
+            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
             if not cache_path or cache_path.exists():
                 continue
 
@@ -165,7 +165,7 @@ class TCNMidiDataset(BaseMidiDataset):
         annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
 
         # Check for cached piano roll
-        cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat, self.instrument_overtones, self.separate_drums)
+        cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
         if cache_path and cache_path.exists():
             # Load cached piano roll
             piano_roll_dict = torch.load(cache_path)

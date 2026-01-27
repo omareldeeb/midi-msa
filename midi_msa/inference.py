@@ -133,8 +133,6 @@ def process_midi_for_tcn(
             file_id,
             piano_roll_dir,
             cfg.target_ticks_per_beat,
-            cfg.instrument_overtones,
-            cfg.separate_drums,
         )
 
     if cache_path and cache_path.exists():
@@ -232,8 +230,6 @@ def process_midi_for_usg(
             file_id,
             piano_roll_dir,
             cfg.target_ticks_per_beat,
-            cfg.instrument_overtones,
-            cfg.separate_drums,
         )
 
     if cache_path and cache_path.exists():

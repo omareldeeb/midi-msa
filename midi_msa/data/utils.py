@@ -638,17 +638,15 @@ def random_take(one_in_n: int) -> bool:
     return (torch.randint(0, one_in_n, ()) < 1).bool().item()  # type: ignore
 
 
-def get_piano_roll_cache_path(file_id: str, piano_roll_dir: Optional[Path], target_ticks_per_beat: int,
-                              instrument_overtones: bool, separate_drums: bool) -> Optional[Path]:
+def get_piano_roll_cache_path(file_id: str, piano_roll_dir: Optional[Path],
+                              target_ticks_per_beat: int) -> Optional[Path]:
     """Get the cache path for a piano roll file."""
     if not piano_roll_dir:
         return None
 
     # Create a unique filename based on file_id and piano roll parameters
     cache_filename = (
-        f"{file_id}_tpb{target_ticks_per_beat}"
-        f"_ot{int(instrument_overtones)}"
-        f"_sd{int(separate_drums)}.pt"
+        f"{file_id}_tpb{target_ticks_per_beat}.pt"
     )
     return piano_roll_dir / cache_filename
 
@@ -729,7 +727,7 @@ def create_lakh_dataset(
         for test_example in tqdm(files_dict[key], desc="Loading examples"):
             metadata_path = data_dir / Path(key) / Path("metadata") / Path(f"{test_example}.pt")
             piano_roll_path = get_piano_roll_cache_path(test_example, data_dir / Path(key) / Path("piano_rolls"),
-                                                        target_ticks_per_beat, instrument_overtones, separate_drums)
+                                                        target_ticks_per_beat)
             if metadata_path.exists() and piano_roll_path and piano_roll_path.exists():
                 # Skip already processed files
                 continue
@@ -958,8 +956,7 @@ def create_piano_roll_patch_data(
                     print(f"Error processing annotations for {test_example}: {e}")
                     continue
 
-            piano_roll_path = get_piano_roll_cache_path(test_example, piano_roll_dir, target_ticks_per_beat,
-                                                        instrument_overtones, separate_drums)
+            piano_roll_path = get_piano_roll_cache_path(test_example, piano_roll_dir, target_ticks_per_beat)
             sslm_path = get_sslm_cache_path(test_example, sslm_dir, target_ticks_per_beat)
 
             if piano_roll_path and piano_roll_path.exists():
