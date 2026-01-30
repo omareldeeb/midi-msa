@@ -4,9 +4,10 @@ import json
 
 LABEL_MAP = {
     "Intro": "Intro",
+    "Pre-Verse": "Intro",
 
-    "Outro": "Outro",
-    "Coda": "Outro",
+    "Outro": "Intro",
+    "Coda": "Intro",
 
     "Verse": "Verse",
     "Pre-Chorus": "Verse",
@@ -14,15 +15,13 @@ LABEL_MAP = {
     "Chorus": "Chorus",
     "Post-Chorus": "Chorus",
 
-    "Bridge": "Bridge",
-    "Transition": "Bridge",
-
+    "Bridge": "Instrumental",
+    "Transition": "Instrumental",
     "Solo": "Instrumental",
-    "Pre-Verse": "Instrumental",
     "Instrumental": "Instrumental",
     "Interlude": "Instrumental",
 
-    "End": "End",
+    "End": "Start",
     "Start": "Start",
 }
 
