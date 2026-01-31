@@ -16,16 +16,10 @@ pad_boundary_patches: true
 patch_normalize: false
 
 # USG-specific model parameters
-pretrained: false
+pretrained: true
 output_features: 64
 num_targets: 1
 
 # Multi-task learning
-predict_segment_label: false
-segment_label_loss_weight: 1.0
-
-# Data format (for auto-creation if data_dir doesn't exist)
-# OLD FORMAT: requires markers_qn_path, measures_qn_path
-# NEW FORMAT: requires annotation_dir only (in main config)
-markers_qn_path: /Users/omar/Documents/Projects/midi-msa/slms_metadata/markers_qn.json  # Old format only: markers_qn.json path
-measures_qn_path: /Users/omar/Documents/Projects/midi-msa/slms_metadata/measures_qn.json  # Optional: measures_qn.json path
+compute_segment_labels: true
+segment_label_loss_weight: 0.25

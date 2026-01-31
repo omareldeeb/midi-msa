@@ -1,13 +1,11 @@
 import json
 from pathlib import Path
 from typing import List, Dict, Optional, Union
-import glob
 
 import torch
-from tqdm import tqdm
 
 from .base_dataset import BaseMidiDataset
-from .utils import parse_midi, widen_temporal_events, compute_sslms, get_piano_roll_cache_path, get_sslm_cache_path, create_piano_roll_fast, compute_sslms_from_midi_path
+from .utils import widen_temporal_events, get_piano_roll_cache_path, get_sslm_cache_path, compute_sslms_from_midi_path
 from .label_preprocessor import preprocess_labels
 
 
@@ -21,11 +19,12 @@ class TCNMidiDataset(BaseMidiDataset):
         segment_function_vocab: Optional[List[str]] = None,
         compute_beats: bool = True,
         compute_downbeats: bool = True,
-        compute_segments: bool = True,
+        compute_segment_labels: bool = True,
         instrument_overtones: bool = True,
         separate_drums: bool = True,
+        use_sslms: bool = True,
         piano_roll_dir: Optional[Union[str, Path]] = None,
-        sslms_dir: Optional[Union[str, Path]] = None,
+        sslm_dir: Optional[Union[str, Path]] = None,
         transpose_augmentation: bool = True,
         **kwargs
     ):
@@ -34,127 +33,27 @@ class TCNMidiDataset(BaseMidiDataset):
             instrument_overtones=instrument_overtones,
             separate_drums=separate_drums,
             transpose_augmentation=transpose_augmentation,
-            compute_sslms=sslms_dir is not None,
+            use_sslms=use_sslms,
+            compute_segment_labels=compute_segment_labels,
             segment_function_vocab=segment_function_vocab,
+            midi_dir=midi_dir,
+            annotation_dir=annotation_dir,
+            midi_files=midi_files,
+            piano_roll_dir=piano_roll_dir,
+            sslm_dir=sslm_dir,
         )
 
-        self.midi_dir = Path(midi_dir)
-        self.annotation_dir = Path(annotation_dir)
         self.compute_beats = compute_beats
         self.compute_downbeats = compute_downbeats
-        self.compute_segments = compute_segments
-        self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
-        self.sslms_dir = Path(sslms_dir) if sslms_dir else None
 
-        # Create cache directory if it doesn't exist
-        if self.piano_roll_dir:
-            self.piano_roll_dir.mkdir(parents=True, exist_ok=True)
-
-        if self.sslms_dir:
-            self.sslms_dir.mkdir(parents=True, exist_ok=True)
-
-        # Get all annotation files and extract MIDI file IDs
-        if midi_files is None:
-            annotation_files = glob.glob(str(self.annotation_dir / "*_labels_coarse_qn.json"))
-            self.midi_file_ids = [Path(f).stem.replace("_labels_coarse_qn", "") for f in annotation_files]
-        else:
-            self.midi_file_ids = midi_files
-            
-        # Filter out files that don't have both MIDI and annotation
-        valid_file_ids = []
-        for file_id in tqdm(self.midi_file_ids, desc="Validating files"):
-            midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-            annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
-
-            if midi_path.exists() and annotation_path.exists():
-                valid_file_ids.append(file_id)
-                
-        self.midi_file_ids = valid_file_ids
-        print(f"Found {len(self.midi_file_ids)} valid MIDI files with annotations")
-        
-        # Build segment function vocabulary if not provided
-        if segment_function_vocab is None and compute_segments:
-            self.segment_function_vocab = self._build_segment_vocab()
-        else:
-            self.segment_function_vocab = segment_function_vocab
-            
         # Load measure data if available
-        try:
-            with open("slms_metadata/measures_qn.json", "r") as f:
-                self.measures_qn = json.load(f)
-        except FileNotFoundError:
-            self.measures_qn = {}
-            print("Warning: measures_qn.json not found, beat/downbeat computation will be limited")
+        # try:
+        #     with open("slms_metadata/measures_qn.json", "r") as f:
+        #         self.measures_qn = json.load(f)
+        # except FileNotFoundError:
+        #     self.measures_qn = {}
+        #     print("Warning: measures_qn.json not found, beat/downbeat computation will be limited")
 
-        # Precompute piano roll cache if caching is enabled
-        if self.piano_roll_dir:
-            self._precompute_piano_roll_cache()
-
-    def _compute_piano_roll(self, file_id: str) -> Optional[torch.Tensor]:
-        """Compute piano roll using base class method."""
-        midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-        try:
-            piano_roll = create_piano_roll_fast(
-                path_to_midi_file=midi_path,
-                chroma=False,
-                target_ticks_per_beat=self.target_ticks_per_beat,
-            )
-        except Exception as e:
-            print(f"Error computing piano roll for {midi_path}: {e}")
-            return None
-
-        piano_roll['piano_roll'] = torch.from_numpy(piano_roll['piano_roll'])
-        return piano_roll
-
-    def _precompute_piano_roll_cache(self):
-        """Precompute and cache all piano rolls."""
-        if not self.piano_roll_dir:
-            return
-
-        # Check which files need to be cached
-        files_to_cache = []
-        for file_id in self.midi_file_ids:
-            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
-            if cache_path and not cache_path.exists():
-                files_to_cache.append(file_id)
-
-        if not files_to_cache:
-            print(f"All {len(self.midi_file_ids)} piano rolls already cached")
-            return
-
-        print(f"Caching {len(files_to_cache)} piano rolls...")
-        for file_id in tqdm(files_to_cache, desc="Caching piano rolls"):
-            cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
-            if not cache_path or cache_path.exists():
-                continue
-
-            # Compute piano roll
-            result = self._compute_piano_roll(file_id)
-            if result is None:
-                continue
-
-            # Save to cache
-            torch.save(result, cache_path)
-
-    def _build_segment_vocab(self) -> List[str]:
-        """Build vocabulary of unique segment functions from all annotations."""
-        vocab = set()
-        
-        for file_id in tqdm(self.midi_file_ids, desc="Building segment vocabulary"):
-            annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
-            with open(annotation_path, "r") as f:
-                annotations = json.load(f)
-                
-            for _, label in annotations:
-                # Extract first function from semicolon-separated string
-                if label != "End":
-                    function = label.split(";")[0].strip()
-                    vocab.add(function)
-        
-        vocab = sorted(list(vocab))
-        print(f"Built segment vocabulary with {len(vocab)} unique functions: {vocab}")
-        return vocab
-    
     def __len__(self) -> int:
         return len(self.midi_file_ids)
     
@@ -174,6 +73,7 @@ class TCNMidiDataset(BaseMidiDataset):
             # Compute piano roll
             piano_roll_dict = self._compute_piano_roll(file_id)
             if piano_roll_dict is None:
+                raise ValueError(f'empty piano roll dict for {file_id}')
                 return self._get_empty_sample()
 
             # Save to cache if caching is enabled
@@ -205,8 +105,8 @@ class TCNMidiDataset(BaseMidiDataset):
         
         # Create sample dict
         sample = {}
-        if self.compute_sslms:
-            sslm_cache_path = get_sslm_cache_path(file_id, self.sslms_dir, self.target_ticks_per_beat)
+        if self.use_sslms:
+            sslm_cache_path = get_sslm_cache_path(file_id, self.sslm_dir, self.target_ticks_per_beat)
             if sslm_cache_path and sslm_cache_path.exists():
                 sslm_data = torch.load(sslm_cache_path)
                 sslm_near = sslm_data["sslm_near"]
@@ -289,7 +189,7 @@ class TCNMidiDataset(BaseMidiDataset):
         sample['segment_labels_in_piano_roll'] = activation_segment_labels
 
         # Compute segment boundary activation
-        if self.compute_segments:
+        if self.compute_segment_labels:
             segment_activation = torch.zeros(num_time_frames, dtype=torch.float32)
             segment_activation[activation_segment_ticks] = 1.0
             segment_activation = widen_temporal_events(segment_activation, num_neighbors=2)
@@ -375,14 +275,14 @@ class TCNMidiDataset(BaseMidiDataset):
         sample = {
             "piano_roll": torch.zeros(3, 128, 1),
         }
-        if self.compute_segments:
+        if self.compute_segment_labels:
             sample["segment_activation"] = torch.zeros(1)
             sample["segment_label_activations"] = torch.zeros(1, dtype=torch.long)
         if self.compute_beats:
             sample["beat_activation"] = torch.zeros(1)
         if self.compute_downbeats:
             sample["downbeat_activation"] = torch.zeros(1)
-        if self.compute_sslms:
+        if self.use_sslms:
             sample["sslm_near"] = torch.zeros(1, 128, 1)
             sample["sslm_far"] = torch.zeros(1, 128, 1)
         return sample

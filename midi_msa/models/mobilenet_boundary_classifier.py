@@ -6,16 +6,18 @@ import torchvision.models
 
 # Simple CNN boundary classifier
 class MobileNetBoundaryClassifier(nn.Module):
-    def __init__(self, num_targets=1, pretrained=True, use_sslm_near=False, use_sslm_far=False, output_features=64, segment_function_vocab: Optional[List[str]] = None):
+    def __init__(self, num_targets=1, pretrained=True, use_sslm_near=False, use_sslm_far=False, output_features=64,
+                 segment_function_vocab: Optional[List[str]] = None, compute_segment_labels: bool = False):
         super().__init__()
 
         self.segment_function_vocab = segment_function_vocab
+        self.compute_segment_labels = compute_segment_labels
         self.num_segment_classes = len(segment_function_vocab) if segment_function_vocab is not None else 0
         self.pretrained = pretrained
 
         weights = torchvision.models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         piano_roll_model = torchvision.models.mobilenet_v3_small(weights=weights)
-        if use_sslm_near or use_sslm_far or segment_function_vocab is not None:
+        if True:  # use_sslm_near or use_sslm_far or (segment_function_vocab is not None and self.compute_segment_labels):
             piano_roll_model.classifier[-1] = nn.Sequential(
                 nn.Linear(piano_roll_model.classifier[-1].in_features, output_features),
                 nn.ReLU(),
@@ -23,9 +25,9 @@ class MobileNetBoundaryClassifier(nn.Module):
         else:
             piano_roll_model.classifier[-1] = nn.Linear(piano_roll_model.classifier[-1].in_features, num_targets)
 
-        for layer in piano_roll_model.classifier:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight.data)
+        # for layer in piano_roll_model.classifier:
+        #     if isinstance(layer, nn.Linear):
+        #         nn.init.xavier_uniform_(layer.weight.data)
         self.piano_roll_model = piano_roll_model
 
         if use_sslm_near:
@@ -34,9 +36,9 @@ class MobileNetBoundaryClassifier(nn.Module):
                 nn.Linear(sslm_near_model.classifier[-1].in_features, output_features),
                 nn.ReLU(),
             )
-            for layer in sslm_near_model.classifier:
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight.data)
+            # for layer in sslm_near_model.classifier:
+            #     if isinstance(layer, nn.Linear):
+            #         nn.init.xavier_uniform_(layer.weight.data)
 
             if not pretrained:
                 # Use single channel input for SSLM models
@@ -49,7 +51,7 @@ class MobileNetBoundaryClassifier(nn.Module):
                     padding=old_conv.padding,
                     bias=old_conv.bias is not None
                 )
-                nn.init.xavier_uniform_(sslm_near_model.features[0][0].weight.data)
+                # nn.init.xavier_uniform_(sslm_near_model.features[0][0].weight.data)
             
             self.sslm_near_model = sslm_near_model
 
@@ -59,9 +61,9 @@ class MobileNetBoundaryClassifier(nn.Module):
                 nn.Linear(sslm_far_model.classifier[-1].in_features, output_features),
                 nn.ReLU(),
             )
-            for layer in sslm_far_model.classifier:
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight.data)
+            # for layer in sslm_far_model.classifier:
+            #     if isinstance(layer, nn.Linear):
+            #         nn.init.xavier_uniform_(layer.weight.data)
 
             if not pretrained:
                 # Use single channel input for SSLM models
@@ -74,27 +76,27 @@ class MobileNetBoundaryClassifier(nn.Module):
                     padding=old_conv.padding,
                     bias=old_conv.bias is not None
                 )
-                nn.init.xavier_uniform_(sslm_far_model.features[0][0].weight.data)
+                # nn.init.xavier_uniform_(sslm_far_model.features[0][0].weight.data)
 
             self.sslm_far_model = sslm_far_model
 
         output_features_total = output_features + (output_features if use_sslm_near else 0) + (output_features if use_sslm_far else 0)
 
         # Boundary classification head
-        if use_sslm_near or use_sslm_far or segment_function_vocab is not None:
+        if True:  # use_sslm_near or use_sslm_far or segment_function_vocab is not None:
             self.boundary_classifier = nn.Sequential(
                 nn.Linear(output_features_total, 128),
                 nn.ReLU(),
-                nn.Dropout(0.5),
+                nn.Dropout(0.2),
                 nn.Linear(128, num_targets)
             )
 
         # Segment label classification head
-        if segment_function_vocab is not None:
+        if segment_function_vocab is not None and self.compute_segment_labels:
             self.segment_label_classifier = nn.Sequential(
                 nn.Linear(output_features_total, 128),
                 nn.ReLU(),
-                nn.Dropout(0.5),
+                nn.Dropout(0.2),
                 nn.Linear(128, self.num_segment_classes)
             )
 
@@ -123,7 +125,7 @@ class MobileNetBoundaryClassifier(nn.Module):
         output = {}
         output["boundary_logits"] = self.boundary_classifier(combined)
 
-        if self.segment_function_vocab is not None:
+        if self.segment_function_vocab is not None and self.compute_segment_labels:
             output["segment_label_logits"] = self.segment_label_classifier(combined)
 
         return output

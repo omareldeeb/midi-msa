@@ -9,13 +9,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from midi_msa.data.tcn_dataset import TCNMidiDataset
 from midi_msa.data.label_preprocessor import LABEL_MAP
 from midi_msa.models.tcn import TCN
-from midi_msa.evaluation.metrics import acc_prec_recall
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
@@ -381,12 +380,12 @@ def train_fold(
     }
     train_dataset = TCNMidiDataset(
         midi_files=train_midi_files,
-        sslms_dir=args.sslm_dir,
+        sslm_dir=args.sslm_dir,
         **dataset_args
     )
     val_dataset = TCNMidiDataset(
         midi_files=val_midi_files,
-        sslms_dir=args.sslm_dir,
+        sslm_dir=args.sslm_dir,
         **dataset_args
     )
     print(f"Dataset splits - Train: {len(train_dataset)}, Val: {len(val_dataset)}")

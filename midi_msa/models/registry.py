@@ -27,6 +27,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_sslm_far=cfg.use_sslm_far,
             output_features=cfg.output_features,
             segment_function_vocab=segment_vocab,
+            compute_segment_labels=cfg.compute_segment_labels
         )
     elif cfg.method == "tcn":
         model = TCN(

@@ -78,18 +78,18 @@ class TCNTrainer(BaseTrainer):
             "target_ticks_per_beat": self.cfg.target_ticks_per_beat,
             "compute_beats": self.cfg.compute_beats,
             "compute_downbeats": self.cfg.compute_downbeats,
-            "compute_segments": self.cfg.compute_segments,
+            "compute_segment_labels": self.cfg.compute_segment_labels,
             "instrument_overtones": self.cfg.instrument_overtones,
             "separate_drums": self.cfg.separate_drums,
         }
 
         train_dataset = TCNMidiDataset(
-            midi_files=train_files, sslms_dir=self.cfg.sslm_dir,
+            midi_files=train_files, sslm_dir=self.cfg.sslm_dir,
             transpose_augmentation=self.cfg.transpose_augmentation,
             **dataset_args
         )
         val_dataset = TCNMidiDataset(
-            midi_files=val_files, sslms_dir=self.cfg.sslm_dir,
+            midi_files=val_files, sslm_dir=self.cfg.sslm_dir,
             transpose_augmentation=False,
             **dataset_args
         )

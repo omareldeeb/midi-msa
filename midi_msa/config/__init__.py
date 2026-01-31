@@ -18,7 +18,7 @@ class BaseConfig:
 
     # Data paths
     midi_dir: Optional[str] = None
-    annotation_dir: Optional[str] = None
+    annotation_dir: str = ''
     # Optional cache paths
     piano_roll_dir: Optional[str] = None
     sslm_dir: Optional[str] = None
@@ -79,12 +79,8 @@ class USGConfig(BaseConfig):
     num_targets: int = 1
 
     # Multi-task learning
-    predict_segment_label: bool = False
+    compute_segment_labels: bool = False
     segment_label_loss_weight: float = 1.0
-
-    # Data format (for auto-creation if data_dir doesn't exist)
-    markers_qn_path: Optional[str] = None
-    measures_qn_path: Optional[str] = None
 
 
 @dataclass
@@ -106,7 +102,7 @@ class TCNConfig(BaseConfig):
     # Task configuration
     compute_beats: bool = False
     compute_downbeats: bool = False
-    compute_segments: bool = True
+    compute_segment_labels: bool = True
 
     # Loss weights
     beat_loss_weight: float = 1.0

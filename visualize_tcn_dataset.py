@@ -426,14 +426,14 @@ def main():
     label_map.sort()
     dataset = TCNMidiDataset(
         midi_dir=args.midi_dir,
-        sslms_dir=args.sslm_dir,
+        sslm_dir=args.sslm_dir,
         annotation_dir=args.annotation_dir,
         midi_files=midi_files,
         target_ticks_per_beat=args.target_ticks_per_beat,
         segment_function_vocab=label_map,
         compute_beats=False,
         compute_downbeats=False,
-        compute_segments=True,
+        compute_segment_labels=True,
         instrument_overtones=True,
         separate_drums=True
     )

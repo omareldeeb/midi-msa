@@ -4,18 +4,15 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from ..data.label_preprocessor import LABEL_MAP
-from ..data.piano_roll_dataset import PianoRollDataset
-from ..data.utils import create_piano_roll_patch_data
 from ..evaluation.metrics import compute_metrics
 from .base_trainer import BaseTrainer
-
+from ..data.usg_dataset import USGMidiDataset
 
 class USGTrainer(BaseTrainer):
     """Trainer for USG (patch-based) method."""
@@ -25,15 +22,14 @@ class USGTrainer(BaseTrainer):
 
         self.boundary_criterion = nn.BCEWithLogitsLoss()
         self.segment_criterion = (
-            nn.CrossEntropyLoss() if cfg.predict_segment_label else None
+            nn.CrossEntropyLoss() if cfg.compute_segment_labels else None
         )
 
     def lower_is_better(self) -> bool:
-        return True  # Loss should be minimized
+        return False  # validation metric should be maximized
 
     def get_dataloaders(self) -> Tuple:
         """Create dataloaders for USG training."""
-        files_dict = None
         if self.cfg.split_files and Path(self.cfg.split_files[0]).exists():
             with open(self.cfg.split_files[0], 'r') as f:
                 files_dict = json.load(f)
@@ -65,97 +61,135 @@ class USGTrainer(BaseTrainer):
 
     def _create_dataloaders(self, files_dict: dict) -> Tuple:
         """Create train and validation dataloaders from a files dictionary."""
-        patch_data = create_piano_roll_patch_data(
-            midi_dir=self.cfg.midi_dir,
-            files_dict=files_dict,
-            markers_qn_path=self.cfg.markers_qn_path,
-            measures_qn_path=self.cfg.measures_qn_path,
-            annotation_dir=self.cfg.annotation_dir,
-            piano_roll_dir=self.cfg.piano_roll_dir,
-            sslm_dir=self.cfg.sslm_dir,
-            window_half_ticks=self.cfg.window_half_ticks,
-            target_ticks_per_beat=self.cfg.target_ticks_per_beat,
-            instrument_overtones=self.cfg.instrument_overtones,
-            separate_drums=self.cfg.separate_drums,
-            positive_oversampling_factor=self.cfg.positive_oversampling_factor,
-            negative_undersampling_factor=self.cfg.negative_undersampling_factor,
-            return_sslm_near=self.cfg.use_sslm_near,
-            return_sslm_far=self.cfg.use_sslm_far,
-        )
 
-        piano_rolls = patch_data.piano_rolls
-        metadata_dict = patch_data.patch_metadata
-        sslm_near_patches = patch_data.sslm_near_patches
-        sslm_far_patches = patch_data.sslm_far_patches
-        metadata_df = pd.DataFrame.from_dict(metadata_dict, orient="index").sample(
-            frac=1
-        )
-
-        # Split into train/val
-        metadata_train = metadata_df[
-            metadata_df["key"].isin(["tubb_train", "non_tubb_train"])
-        ]
-        metadata_val_tubb = metadata_df[metadata_df["key"] == "tubb_val"]
-        metadata_val_non_tubb = metadata_df[metadata_df["key"] == "non_tubb_val"]
-
-        metadata_train.reset_index(drop=True, inplace=True)
-        metadata_val_tubb.reset_index(drop=True, inplace=True)
-        metadata_val_non_tubb.reset_index(drop=True, inplace=True)
-
-        # Create datasets
         segment_vocab = sorted(list(set(LABEL_MAP.values())))
-        dataset_train = PianoRollDataset(
-            piano_rolls,
-            metadata_train,
-            normalize=self.cfg.patch_normalize,
-            transpose_augmentation=self.cfg.transpose_augmentation,
-            num_targets=self.cfg.num_targets,
-            sslm_near_patches=sslm_near_patches,
-            sslm_far_patches=sslm_far_patches,
-            segment_function_vocab=segment_vocab,
-            separate_drums=self.cfg.separate_drums,
-            instrument_overtones=self.cfg.instrument_overtones,
-        )
 
-        dataset_val_tubb = PianoRollDataset(
-            piano_rolls,
-            metadata_val_tubb,
-            normalize=self.cfg.patch_normalize,
-            transpose_augmentation=False,  # No augmentation for validation
-            num_targets=self.cfg.num_targets,
-            sslm_near_patches=sslm_near_patches,
-            sslm_far_patches=sslm_far_patches,
-            segment_function_vocab=segment_vocab,
-            separate_drums=self.cfg.separate_drums,
-            instrument_overtones=self.cfg.instrument_overtones,
-        )
+        assert self.cfg.use_sslm_near == self.cfg.use_sslm_far, 'USG method requires both or neither SSLMs'
 
-        dataset_val_non_tubb = PianoRollDataset(
-            piano_rolls,
-            metadata_val_non_tubb,
-            normalize=self.cfg.patch_normalize,
-            transpose_augmentation=False,  # No augmentation for validation
-            num_targets=self.cfg.num_targets,
-            sslm_near_patches=sslm_near_patches,
-            sslm_far_patches=sslm_far_patches,
-            segment_function_vocab=segment_vocab,
-            separate_drums=self.cfg.separate_drums,
-            instrument_overtones=self.cfg.instrument_overtones,
-        )
+        cfg_dict = {
+            'midi_dir': self.cfg.midi_dir,
+            'annotation_dir': self.cfg.annotation_dir,
+            'target_ticks_per_beat': self.cfg.target_ticks_per_beat,
+            'window_half_ticks': self.cfg.window_half_ticks,
+            'pad_boundary_patches': self.cfg.pad_boundary_patches,
+            'segment_function_vocab': segment_vocab,
+            'compute_segment_labels': self.cfg.compute_segment_labels,
+            'instrument_overtones': self.cfg.instrument_overtones,
+            'separate_drums': self.cfg.separate_drums,
+            'use_sslms': self.cfg.use_sslm_near,
+            'piano_roll_dir': self.cfg.piano_roll_dir,
+            'sslm_dir': self.cfg.sslm_dir,
+            'normalize_patches': self.cfg.patch_normalize,
+            'num_targets': self.cfg.num_targets
+        }
+        dataset_train = USGMidiDataset(midi_files=files_dict['train'],
+                                       positive_oversampling_factor=self.cfg.positive_oversampling_factor,
+                                       negative_undersampling_factor=self.cfg.negative_undersampling_factor,
+                                       transpose_augmentation=self.cfg.transpose_augmentation,
+                                       **cfg_dict)
+        dataset_val = USGMidiDataset(midi_files=files_dict['val'],
+                                     positive_oversampling_factor=1,
+                                     negative_undersampling_factor=1,
+                                     transpose_augmentation=False,
+                                     **cfg_dict)
+
+
+        # patch_data = create_piano_roll_patch_data(
+        #     midi_dir=self.cfg.midi_dir,
+        #     files_dict=files_dict,
+        #     # markers_qn_path=self.cfg.markers_qn_path,
+        #     # measures_qn_path=self.cfg.measures_qn_path,
+        #     annotation_dir=self.cfg.annotation_dir,
+        #     piano_roll_dir=self.cfg.piano_roll_dir,
+        #     sslm_dir=self.cfg.sslm_dir,
+        #     window_half_ticks=self.cfg.window_half_ticks,
+        #     target_ticks_per_beat=self.cfg.target_ticks_per_beat,
+        #     instrument_overtones=self.cfg.instrument_overtones,
+        #     separate_drums=self.cfg.separate_drums,
+        #     positive_oversampling_factor=self.cfg.positive_oversampling_factor,
+        #     negative_undersampling_factor=self.cfg.negative_undersampling_factor,
+        #     return_sslm_near=self.cfg.use_sslm_near,
+        #     return_sslm_far=self.cfg.use_sslm_far,
+        # )
+        #
+        # piano_rolls = patch_data.piano_rolls
+        # metadata_dict = patch_data.patch_metadata
+        # sslm_near_patches = patch_data.sslm_near_patches
+        # sslm_far_patches = patch_data.sslm_far_patches
+        # metadata_df = pd.DataFrame.from_dict(metadata_dict, orient="index").sample(
+        #     frac=1
+        # )
+        #
+        # # Split into train/val
+        # metadata_train = metadata_df[
+        #     metadata_df["key"].isin(["tubb_train", "non_tubb_train"])
+        # ]
+        # metadata_val_tubb = metadata_df[metadata_df["key"] == "tubb_val"]
+        # metadata_val_non_tubb = metadata_df[metadata_df["key"] == "non_tubb_val"]
+        #
+        # metadata_train.reset_index(drop=True, inplace=True)
+        # metadata_val_tubb.reset_index(drop=True, inplace=True)
+        # metadata_val_non_tubb.reset_index(drop=True, inplace=True)
+        #
+        # # Create datasets
+        # segment_vocab = sorted(list(set(LABEL_MAP.values())))
+        # dataset_train = PianoRollDataset(
+        #     piano_rolls,
+        #     metadata_train,
+        #     normalize=self.cfg.patch_normalize,
+        #     transpose_augmentation=self.cfg.transpose_augmentation,
+        #     num_targets=self.cfg.num_targets,
+        #     sslm_near_patches=sslm_near_patches,
+        #     sslm_far_patches=sslm_far_patches,
+        #     segment_function_vocab=segment_vocab,
+        #     separate_drums=self.cfg.separate_drums,
+        #     instrument_overtones=self.cfg.instrument_overtones,
+        # )
+        #
+        # dataset_val_tubb = PianoRollDataset(
+        #     piano_rolls,
+        #     metadata_val_tubb,
+        #     normalize=self.cfg.patch_normalize,
+        #     transpose_augmentation=False,  # No augmentation for validation
+        #     num_targets=self.cfg.num_targets,
+        #     sslm_near_patches=sslm_near_patches,
+        #     sslm_far_patches=sslm_far_patches,
+        #     segment_function_vocab=segment_vocab,
+        #     separate_drums=self.cfg.separate_drums,
+        #     instrument_overtones=self.cfg.instrument_overtones,
+        # )
+        #
+        # dataset_val_non_tubb = PianoRollDataset(
+        #     piano_rolls,
+        #     metadata_val_non_tubb,
+        #     normalize=self.cfg.patch_normalize,
+        #     transpose_augmentation=False,  # No augmentation for validation
+        #     num_targets=self.cfg.num_targets,
+        #     sslm_near_patches=sslm_near_patches,
+        #     sslm_far_patches=sslm_far_patches,
+        #     segment_function_vocab=segment_vocab,
+        #     separate_drums=self.cfg.separate_drums,
+        #     instrument_overtones=self.cfg.instrument_overtones,
+        # )
 
         # Create dataloaders
         train_loader = DataLoader(
             dataset_train, batch_size=self.cfg.batch_size, shuffle=True
         )
-        val_loader_tubb = DataLoader(
-            dataset_val_tubb, batch_size=self.cfg.batch_size, shuffle=False
-        )
-        val_loader_non_tubb = DataLoader(
-            dataset_val_non_tubb, batch_size=self.cfg.batch_size, shuffle=False
+
+        # val_loader_tubb = DataLoader(
+        #     dataset_val_tubb, batch_size=self.cfg.batch_size, shuffle=False
+        # )
+        # val_loader_non_tubb = DataLoader(
+        #     dataset_val_non_tubb, batch_size=self.cfg.batch_size, shuffle=False
+        # )
+        val_loader = DataLoader(
+            dataset_val, batch_size=self.cfg.batch_size, shuffle=False
         )
 
         # Return val loaders as iterable of (name, dataloader) tuples
-        val_loaders = [("tubb", val_loader_tubb), ("non_tubb", val_loader_non_tubb)]
+        # val_loaders = [("tubb", val_loader_tubb), ("non_tubb", val_loader_non_tubb)]
+        val_loaders = [('val', val_loader)]
 
         return train_loader, val_loaders
 
@@ -185,7 +219,7 @@ class USGTrainer(BaseTrainer):
 
             if "segment_label_logits" in output and "segment_label_target" in batch:
                 segment_loss = self.segment_criterion(
-                    output["segment_label_logits"], batch["segment_label_target"]
+                    output["segment_label_logits"], batch["segment_label_target"].long()
                 )
                 loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
@@ -251,7 +285,7 @@ class USGTrainer(BaseTrainer):
 
                     if "segment_label_logits" in output and "segment_label_target" in batch:
                         segment_loss = self.segment_criterion(
-                            output["segment_label_logits"], batch["segment_label_target"]
+                            output["segment_label_logits"], batch["segment_label_target"].long()
                         )
                         loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
@@ -292,9 +326,11 @@ class USGTrainer(BaseTrainer):
         # Compute aggregate metrics
         all_metrics["loss"] = sum(all_losses) / len(all_losses)
         all_metrics["f1_avg"] = sum(all_f1s) / len(all_f1s)
+        # TODO change primary_optimization_metric to include label if we are computing labels
+        all_metrics['primary_optimization_metric'] = (all_metrics['f1_avg'] + all_metrics['f1_avg']) / 2
 
         return all_metrics
 
     def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
         """Use average loss for early stopping."""
-        return val_metrics["loss"]
+        return val_metrics["primary_optimization_metric"]
