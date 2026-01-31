@@ -16,7 +16,7 @@ dropout_rate: 0.1
 # Task configuration
 compute_beats: true
 compute_downbeats: true
-compute_segments: true
+compute_segment_labels: true
 
 # Loss weights
 beat_loss_weight: 1.0
