@@ -95,15 +95,11 @@ def preprocess_labels(L: list[list[float | str]], remove_consecutive_identical=F
         print(f"Warning: found unknown labels: {[label for (i, t, label) in working_labels if label not in LABEL_MAP]}")
     working_labels = [(i, t, LABEL_MAP.get(label, "Instrumental")) for (i, t, label) in working_labels]
 
-    # change bridge to chorus in songs that:
-    # have >= 1 verse AND
-    # have >= 2 bridges AND
-    # have no pre-chorus, no chorus, and no post-chorus
+    # change bridge to chorus in certain songs:
     working_labels = _process_bridge_to_chorus(working_labels)
 
     if remove_consecutive_identical:
         working_labels = _process_remove_consecutive_identical_labels(working_labels)
-
 
     final_labels = []
     for tup in working_labels:
