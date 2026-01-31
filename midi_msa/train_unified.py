@@ -89,20 +89,22 @@ def main(cfg: DictConfig):
     trainer = build_trainer(cfg, model, device)
 
     # Check if k-fold cross-validation should be used
-    if cfg.split_files and len(cfg.split_files) > 1:
+    if cfg.split_files:  # and len(cfg.split_files) > 1:
         # Multiple split files provided - run k-fold cross-validation
-        print(f"\nMultiple split files provided ({len(cfg.split_files)}). Starting k-fold cross-validation...\n")
+        print(f"\nSplit files provided ({len(cfg.split_files)}). Starting k-fold "
+              f"cross-validation with k={len(cfg.split_files)}...\n")
         trainer.k_fold_cross_validate(cfg.split_files)
         print("\n" + "=" * 80)
         print("K-fold cross-validation completed successfully!")
         print("=" * 80)
     else:
+        raise ValueError('split_files not provided')
         # Single split file or no split files - run standard training
-        print("\nStarting training...\n")
-        trainer.train()
-        print("\n" + "=" * 80)
-        print("Training completed successfully!")
-        print("=" * 80)
+        # print("\nStarting training...\n")
+        # trainer.train()
+        # print("\n" + "=" * 80)
+        # print("Training completed successfully!")
+        # print("=" * 80)
 
 
 if __name__ == "__main__":
