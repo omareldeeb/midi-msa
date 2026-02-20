@@ -204,7 +204,7 @@ class TCNTrainer(BaseTrainer):
                 losses['contrastive_loss'] = self.nt_xent_loss(embeddings=model_output.segment_embeddings,
                                                       boundaries=[int(x) for x in batch.get('segment_ticks_in_piano_roll')],
                                                       labels=[str(x[0]) for x in batch.get('segment_labels_in_piano_roll')])
-                weighted_losses['contrastive_loss'] = 0.1 * losses.get('contrastive_loss')
+                weighted_losses['contrastive_loss'] = self.cfg.contrastive_loss_weight * losses.get('contrastive_loss')
             else:
                 losses['contrastive_loss'] = 0.0
                 weighted_losses['contrastive_loss'] = 0.0
