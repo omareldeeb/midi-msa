@@ -14,6 +14,7 @@ class TCNOutput:
     function_outputs: torch.Tensor
     segment_embeddings: torch.Tensor
 
+
 class TCNBlock(nn.Module):
     def __init__(
         self,
@@ -77,7 +78,8 @@ class TCNBlock(nn.Module):
         x = self.skip_connection(x)
 
         return res + x, x
-    
+
+
 class TCNFrontend(nn.Module):
     def __init__(
         self,
@@ -266,7 +268,7 @@ class TCN(nn.Module):
 
     def forward(self, x: torch.Tensor, sslm_near: Optional[torch.Tensor], sslm_far: Optional[torch.Tensor]) -> TCNOutput:
         N, C, F, T = x.shape
-        x = self.piano_roll_frontend(x)    # (1, 20, 1, T)
+        x = self.piano_roll_frontend(x)    # (1, n_filters, 1, T)
 
         if self.use_sslm_near and sslm_near is not None:
             sslm_near = self.sslm_near_frontend(sslm_near)
@@ -352,7 +354,7 @@ class TCN(nn.Module):
                 measure_right = measure_ticks_np[i + 1]
             window_right = (measure_right - measure_tick) // 2
 
-            probs = pred_boundary_probs[measure_tick - window_left : measure_tick + window_right]
+            probs = pred_boundary_probs[measure_tick - window_left: measure_tick + window_right]
             if len(probs) > 0:
                 max_prob = np.max(probs)
                 if max_prob >= threshold:
