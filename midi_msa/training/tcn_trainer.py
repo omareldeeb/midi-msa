@@ -264,7 +264,7 @@ class TCNTrainer(BaseTrainer):
         avg_loss = total_loss / num_batches
         return {"loss": avg_loss}
 
-    def validate_epoch(self, val_loaders) -> Dict[str, float]:
+    def validate_epoch(self, val_loaders, boundary_f1_discard_first_and_last=True) -> Dict[str, float]:
         """Validate for one epoch."""
         self.model.eval()
         val_loader = val_loaders[0]
@@ -282,8 +282,17 @@ class TCNTrainer(BaseTrainer):
         total_pairwise_recall = 0.0
         total_pairwise_f1 = 0.0
         total_label_f1 = {label: 0.0 for label in self.label_map}
+        total_nce_f1 = 0.0
         total_label_accuracy = 0.0
         num_boundary_batches = 0
+        est_boundaries_global = set()
+        gt_boundaries_global = set()
+        est_beats_global = set()
+        gt_beats_global = set()
+        est_downbeats_global = set()
+        gt_downbeats_global = set()
+        accuracy_global_numerator = 0.0
+        accuracy_global_denominator = 0.0
 
         with torch.no_grad():
             pbar = tqdm(val_loader, desc="Validation")
@@ -292,6 +301,9 @@ class TCNTrainer(BaseTrainer):
                 sslm_near = batch.get("sslm_near")
                 sslm_far = batch.get("sslm_far")
                 measure_ticks = batch.get("measure_ticks")
+                file_ids = batch.get('file_id')
+                assert len(file_ids) == 1, 'tcn validation requires batch size == 1'
+                file_id = file_ids[0]
 
                 if sslm_near is not None:
                     sslm_near = sslm_near.to(torch.float32).to(self.device)
@@ -350,6 +362,11 @@ class TCNTrainer(BaseTrainer):
                                                n_retrieved=len(retrieved))
                     total_beat_f1 += beat_f1
 
+                    for x in relevant:
+                        gt_beats_global.add((x, file_id))
+                    for x in retrieved:
+                        est_beats_global.add((x, file_id))
+
                 # Compute downbeat f1
                 # Only compute for single samples (batch_size=1)
                 if 'downbeat_activation' in targets and targets['downbeat_activation'].shape[0] == 1:
@@ -362,147 +379,184 @@ class TCNTrainer(BaseTrainer):
                                                    n_retrieved=len(retrieved))
                     total_downbeat_f1 += downbeat_f1
 
+                    for x in relevant:
+                        gt_downbeats_global.add((x, file_id))
+                    for x in retrieved:
+                        est_downbeats_global.add((x, file_id))
+
                 # Compute boundary and pairwise metrics
                 if measure_ticks is not None and "segment_activation" in targets:
-                    boundaries_pred = torch.sigmoid(outputs.segment_output).squeeze()
-                    boundaries_target = targets["segment_activation"].squeeze()
+                    predicted_boundary_ticks, predicted_label_indices = (
+                        self.model.compute_predictions(
+                            output=outputs, measure_ticks=measure_ticks
+                        )
+                    )
 
-                    # Only compute for single samples (batch_size=1)
-                    if boundaries_pred.dim() == 1:
-                        predicted_boundary_ticks, predicted_label_indices = (
-                            self.model.compute_predictions(
-                                output=outputs, measure_ticks=measure_ticks
+                    # add one tick beyond the end for stacking purposes
+                    predicted_boundary_ticks = [int(x) for x in predicted_boundary_ticks]
+                    if predicted_boundary_ticks and predicted_boundary_ticks[-1] != t_max + 1:
+                        predicted_boundary_ticks.append(t_max + 1)
+                    estimated_intervals = np.column_stack(
+                        (
+                            predicted_boundary_ticks[:-1],
+                            predicted_boundary_ticks[1:],
+                        )
+                    )
+
+                    if len(estimated_intervals) == 0:
+                        print('No intervals predicted. Skipping boundary and label computations for this batch item.')
+                        continue
+
+                    gt_boundary_ticks = [int(x) for x in batch.get('segment_ticks_in_piano_roll')]
+                    assert 0 in gt_boundary_ticks, 'gt_boundary_ticks lacks tick 0'
+                    # add one tick beyond the end for stacking purposes
+                    if gt_boundary_ticks and gt_boundary_ticks[-1] != t_max + 1:
+                        gt_boundary_ticks.append(t_max + 1)
+
+                    if len(gt_boundary_ticks) < 2:
+                        print('Fewer than 2 ground truth boundary ticks for this batch item. '
+                              'Skipping boundary and label computations for this batch item.')
+                        continue
+
+                    reference_intervals = np.column_stack(
+                        (gt_boundary_ticks[:-1], gt_boundary_ticks[1:])
+                    )
+
+                    # always throw out the first tick (whether "Start" or "Verse" or whatever)
+                    # always throw out the last tick, whether "End" or not
+                    for i, x in enumerate(predicted_boundary_ticks):
+                        if i == 0 or i == len(predicted_boundary_ticks) - 1:
+                            if not boundary_f1_discard_first_and_last:
+                                est_boundaries_global.add((x, file_id))
+                        else:
+                            est_boundaries_global.add((x, file_id))
+
+                    for i, x in enumerate(gt_boundary_ticks):
+                        if i == 0 or i == len(gt_boundary_ticks) - 1:
+                            if not boundary_f1_discard_first_and_last:
+                                gt_boundaries_global.add((x, file_id))
+                        else:
+                            gt_boundaries_global.add((x, file_id))
+
+                    try:
+                        # Boundary detection metrics
+
+                        # Will trigger a warning when the model doesn't predict any boundaries other than first and
+                        # last tick (happens early in training) - in this case, precision, recall, and f1 are all
+                        # returned as 0.0.
+                        boundary_prec, boundary_recall, boundary_f1 = (
+                            mir_eval.segment.detection(
+                                reference_intervals=reference_intervals,
+                                estimated_intervals=estimated_intervals,
+                                trim=boundary_f1_discard_first_and_last
                             )
                         )
 
-                        # add one tick beyond the end for stacking purposes
-                        predicted_boundary_ticks = [int(x) for x in predicted_boundary_ticks]
-                        if predicted_boundary_ticks and predicted_boundary_ticks[-1] != t_max + 1:
-                            predicted_boundary_ticks.append(t_max + 1)
-                        estimated_intervals = np.column_stack(
-                            (
-                                predicted_boundary_ticks[:-1],
-                                predicted_boundary_ticks[1:],
+                        total_boundary_prec += boundary_prec
+                        total_boundary_recall += boundary_recall
+                        total_boundary_f1 += boundary_f1
+                        num_boundary_batches += 1
+
+                    except Exception as e:
+                        print(f'Exception computing boundary metrics, {e}')
+                        print('estimated intervals:', estimated_intervals)
+                        print('ref int:', reference_intervals)
+                        print('file', batch['file_id'])
+
+                    # Pairwise metrics (requires labels)
+                    if (
+                        "segment_label_activations" in targets
+                        and len(gt_boundary_ticks) > 1
+                    ):
+
+                        gt_labels = [str(x[0]) for x in batch.get('segment_labels_in_piano_roll')]
+
+                        # Shouldn't need to do this
+                        reference_intervals_adj, reference_labels = (
+                            mir_eval.util.adjust_intervals(
+                                reference_intervals, gt_labels, t_min=0, t_max=t_max + 1
                             )
                         )
 
-                        if len(estimated_intervals) == 0:
-                            continue
-
-                        gt_boundary_ticks = [int(x) for x in batch.get('segment_ticks_in_piano_roll')]
-                        # add one tick beyond the end for stacking purposes
-                        if gt_boundary_ticks and gt_boundary_ticks[-1] != t_max + 1:
-                            gt_boundary_ticks.append(t_max + 1)
-
-                        if len(gt_boundary_ticks) < 2:
-                            continue
-
-                        reference_intervals = np.column_stack(
-                            (gt_boundary_ticks[:-1], gt_boundary_ticks[1:])
+                        predicted_labels = [
+                            self.label_map[idx] for idx in predicted_label_indices
+                        ]
+                        estimated_intervals_adj, predicted_labels = (
+                            mir_eval.util.adjust_intervals(
+                                estimated_intervals,
+                                predicted_labels,
+                                t_min=0,
+                                t_max=t_max + 1,
+                            )
                         )
+
+                        assert reference_intervals_adj.shape == reference_intervals.shape
+                        assert (reference_intervals_adj == reference_intervals).all()
+                        # if reference_intervals_adj.shape != reference_intervals.shape or not (reference_intervals_adj == reference_intervals).all():
+                        #     print('yikes')
+                        #     print('file', batch['file_id'])
+                        #     print(reference_intervals_adj)
+                        #     print(reference_intervals)
+                        assert estimated_intervals_adj.shape == estimated_intervals.shape
+                        assert (estimated_intervals_adj == estimated_intervals).all()
+                        # if estimated_intervals_adj.shape != estimated_intervals.shape or not (estimated_intervals_adj == estimated_intervals).all():
+                        #     print('yikes 2')
+                        #     print('file', batch['file_id'])
+                        #     print(estimated_intervals_adj)
+                        #     print(estimated_intervals)
+                        #     print(reference_intervals_adj)
+                        #     print(reference_intervals)
+                        #     print(gt_labels)
+                        assert len(reference_intervals_adj) == len(reference_labels)
+                        assert len(estimated_intervals_adj) == len(predicted_labels)
+                        # if len(reference_intervals_adj) != len(reference_labels) or len(estimated_intervals_adj) != len(predicted_labels):
+                        #     print('yikes3')
+                        #     print('file', batch['file_id'])
+                        #     print(len(reference_intervals_adj), len(reference_labels))
+                        #     print(reference_intervals_adj)
+                        #     print(reference_labels)
+                        #     print(len(estimated_intervals_adj), len(predicted_labels))
+                        #     continue
 
                         try:
-                        # Boundary detection metrics
-                            boundary_prec, boundary_recall, boundary_f1 = (
-                                mir_eval.segment.detection(
-                                    reference_intervals=reference_intervals,
-                                    estimated_intervals=estimated_intervals,
+                            pairwise_prec, pairwise_recall, pairwise_f1 = (
+                                mir_eval.segment.pairwise(
+                                    reference_intervals=reference_intervals_adj,
+                                    reference_labels=reference_labels,
+                                    estimated_intervals=estimated_intervals_adj,
+                                    estimated_labels=predicted_labels,
+                                    frame_size=(
+                                        # (0.1 / 0.5) * self.cfg.target_ticks_per_beat
+                                        1.0
+                                    ),
                                 )
                             )
 
-                            total_boundary_prec += boundary_prec
-                            total_boundary_recall += boundary_recall
-                            total_boundary_f1 += boundary_f1
-                            num_boundary_batches += 1
-
-                        except Exception as e:
-                            print(f'Exception computing boundary metrics, {e}')
-                            print('estimated intervals:', estimated_intervals)
-                            print('ref int:', reference_intervals)
-                            print('file', batch['file_id'])
-
-
-                        # Pairwise metrics (requires labels)
-                        if (
-                            "segment_label_activations" in targets
-                            and len(gt_boundary_ticks) > 1
-                        ):
-
-                            gt_labels = [str(x[0]) for x in batch.get('segment_labels_in_piano_roll')]
-
-                            # Shouldn't need to do this?
-                            reference_intervals_adj, reference_labels = (
-                                mir_eval.util.adjust_intervals(
-                                    reference_intervals, gt_labels, t_min=0, t_max=t_max + 1
-                                )
+                            # in mir_eval.segment._contingency_matrix, replace dtype=np.int with dtype=int
+                            score_over, score_under, nce_f_measure = mir_eval.segment.nce(
+                                reference_intervals=reference_intervals_adj,
+                                reference_labels=reference_labels,
+                                estimated_intervals=estimated_intervals_adj,
+                                estimated_labels=predicted_labels
                             )
+                            total_nce_f1 += nce_f_measure
 
-                            predicted_labels = [
-                                self.label_map[idx] for idx in predicted_label_indices
-                            ]
-                            estimated_intervals_adj, predicted_labels = (
-                                mir_eval.util.adjust_intervals(
-                                    estimated_intervals,
-                                    predicted_labels,
-                                    t_min=0,
-                                    t_max=t_max + 1,
-                                )
-                            )
+                            total_pairwise_prec += pairwise_prec
+                            total_pairwise_recall += pairwise_recall
+                            total_pairwise_f1 += pairwise_f1
+                        except ValueError as err:
+                            print(f'Warning: Error in mir_eval.segment computation: {err}')
 
-                            assert reference_intervals_adj.shape == reference_intervals.shape
-                            assert (reference_intervals_adj == reference_intervals).all()
-                            # if reference_intervals_adj.shape != reference_intervals.shape or not (reference_intervals_adj == reference_intervals).all():
-                            #     print('yikes')
-                            #     print('file', batch['file_id'])
-                            #     print(reference_intervals_adj)
-                            #     print(reference_intervals)
-                            assert estimated_intervals_adj.shape == estimated_intervals.shape
-                            assert (estimated_intervals_adj == estimated_intervals).all()
-                            # if estimated_intervals_adj.shape != estimated_intervals.shape or not (estimated_intervals_adj == estimated_intervals).all():
-                            #     print('yikes 2')
-                            #     print('file', batch['file_id'])
-                            #     print(estimated_intervals_adj)
-                            #     print(estimated_intervals)
-                            #     print(reference_intervals_adj)
-                            #     print(reference_intervals)
-                            #     print(gt_labels)
-                            assert len(reference_intervals_adj) == len(reference_labels)
-                            assert len(estimated_intervals_adj) == len(predicted_labels)
-                            # if len(reference_intervals_adj) != len(reference_labels) or len(estimated_intervals_adj) != len(predicted_labels):
-                            #     print('yikes3')
-                            #     print('file', batch['file_id'])
-                            #     print(len(reference_intervals_adj), len(reference_labels))
-                            #     print(reference_intervals_adj)
-                            #     print(reference_labels)
-                            #     print(len(estimated_intervals_adj), len(predicted_labels))
-                            #     continue
+                        # compute tick-wise label accuracy
+                        true_segment_label_idxs = targets['segment_label_activations'][0]
+                        predicted_label_idxs = torch.argmax(outputs.function_outputs[0], dim=0)
+                        accuracy_numerator = sum(true_segment_label_idxs == predicted_label_idxs).item()
+                        accuracy_denominator = piano_rolls.shape[-1]
+                        accuracy = accuracy_numerator / accuracy_denominator
+                        total_label_accuracy += accuracy
 
-                            try:
-                                pairwise_prec, pairwise_recall, pairwise_f1 = (
-                                    mir_eval.segment.pairwise(
-                                        reference_intervals=reference_intervals_adj,
-                                        reference_labels=reference_labels,
-                                        estimated_intervals=estimated_intervals_adj,
-                                        estimated_labels=predicted_labels,
-                                        frame_size=(
-                                            # (0.1 / 0.5) * self.cfg.target_ticks_per_beat
-                                            1.0
-                                        ),
-                                    )
-                                )
-                                total_pairwise_prec += pairwise_prec
-                                total_pairwise_recall += pairwise_recall
-                                total_pairwise_f1 += pairwise_f1
-                            except ValueError as err:
-                                print(f'Warning: Error in mir_eval.segment.pairwise: {err}')
-
-                            # compute tick-wise label accuracy
-                            true_segment_label_idxs = targets['segment_label_activations'][0]
-                            predicted_label_idxs = torch.argmax(outputs.function_outputs[0], dim=0)
-                            accuracy = sum(true_segment_label_idxs == predicted_label_idxs) / piano_rolls.shape[-1]
-                            accuracy = accuracy.item()
-                            total_label_accuracy += accuracy
-
+                        accuracy_global_numerator += accuracy_numerator
+                        accuracy_global_denominator += accuracy_denominator
 
                 pbar.set_postfix({
                     "batch_loss": losses["total_loss"].item(),
@@ -512,20 +566,35 @@ class TCNTrainer(BaseTrainer):
         metrics = {"loss": total_loss / num_batches}
 
         if num_boundary_batches > 0:
+            boundary_f1_global = utils.generic_F1(numerator=len(est_boundaries_global.intersection(gt_boundaries_global)),
+                                                  n_relevant=len(gt_boundaries_global),
+                                                  n_retrieved=len(est_boundaries_global))
+            beat_f1_global = utils.generic_F1(numerator=len(est_beats_global.intersection(gt_beats_global)),
+                                              n_relevant=len(gt_beats_global),
+                                              n_retrieved=len(est_beats_global))
+            downbeat_f1_global = utils.generic_F1(numerator=len(est_downbeats_global.intersection(gt_downbeats_global)),
+                                                  n_relevant=len(gt_downbeats_global),
+                                                  n_retrieved=len(est_downbeats_global))
+
             metrics['beat_f1'] = total_beat_f1 / num_boundary_batches
+            metrics['beat_f1_global'] = beat_f1_global
             metrics['downbeat_f1'] = total_downbeat_f1 / num_boundary_batches
+            metrics['downbeat_f1_global'] = downbeat_f1_global
             metrics["boundary_precision"] = total_boundary_prec / num_boundary_batches
             metrics["boundary_recall"] = total_boundary_recall / num_boundary_batches
             metrics["boundary_f1"] = total_boundary_f1 / num_boundary_batches
+            metrics["boundary_f1_global"] = boundary_f1_global
             metrics["pairwise_precision"] = total_pairwise_prec / num_boundary_batches
             metrics["pairwise_recall"] = total_pairwise_recall / num_boundary_batches
             metrics["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
+            metrics["nce"] = total_nce_f1 / num_boundary_batches
             # for label in self.label_map:
             #     metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
             # # Average label F1
             # metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in self.label_map])
             metrics['label_accuracy'] = total_label_accuracy / num_boundary_batches
-            metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['pairwise_f1']) / 2
+            metrics['label_accuracy_global'] = accuracy_global_numerator / accuracy_global_denominator
+            metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['label_accuracy']) / 2
 
         return metrics
 
