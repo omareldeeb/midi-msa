@@ -5,7 +5,7 @@ from ..data import utils
 import torch
 from tqdm import tqdm
 import json
-from label_preprocessor import preprocess_labels
+from .label_preprocessor import preprocess_labels
 import bisect
 import torch.nn.functional as F
 
