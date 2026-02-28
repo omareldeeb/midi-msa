@@ -7,9 +7,11 @@ from torcheval.metrics.functional import multiclass_f1_score
 from tqdm import tqdm
 
 from ..data import utils
+from ..data import label_preprocessor
 
 
-def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
+def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, label_map_val, segment_vocab_val,
+                       device, loss_fn,
                        boundary_f1_discard_first_and_last: bool) -> Dict[str, float]:
     model.eval()
 
@@ -25,9 +27,10 @@ def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
     total_pairwise_prec = 0.0
     total_pairwise_recall = 0.0
     total_pairwise_f1 = 0.0
-    total_label_f1 = {label: 0.0 for label in label_map}
+    total_label_f1 = {label: 0.0 for label in label_map_val}
     total_nce_f1 = 0.0
     total_label_accuracy = 0.0
+    total_label_accuracy_after_segment_picking = 0.0
     num_boundary_batches = 0
     est_boundaries_global = set()
     gt_boundaries_global = set()
@@ -64,35 +67,14 @@ def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
             outputs = model(
                 piano_rolls, sslm_near=sslm_near, sslm_far=sslm_far
             )
-            losses = loss_fn(outputs, targets, batch)
 
-            total_loss += losses["total_loss"].item()
+            # loss only makes sense if label_map_train == label_map_val
+            if label_map_train == label_map_val:
+                losses = loss_fn(outputs, targets, batch)
+                total_loss += losses["total_loss"].item()
+
             num_batches += 1
             t_max = piano_rolls.shape[-1] - 1
-
-            # Compute F1 for function labels
-            # if outputs.function_outputs is not None and "segment_label_activations" in targets:
-            #     predicted_label_probabilities = torch.softmax(
-            #         outputs.function_outputs.squeeze(), dim=-2
-            #     ).argmax(dim=-2)
-            #
-            #     true_labels = targets["segment_label_activations"].squeeze()
-            #
-            #     predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
-            #     true_labels_flat = true_labels.view(-1)
-            #
-            #     f1 = multiclass_f1_score(
-            #         predicted_label_probabilities_flat,
-            #         true_labels_flat,
-            #         num_classes=len(self.label_map),
-            #         average=None,
-            #     )
-            #
-            #     unique_labels = torch.unique(true_labels_flat)
-            #     for label_idx, label in enumerate(self.label_map):
-            #         if label_idx in unique_labels:
-            #             label_f1 = f1[label_idx].item()
-            #             total_label_f1[label] += label_f1
 
             # Compute beat f1
             # Only compute for single samples (batch_size=1)
@@ -223,8 +205,13 @@ def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
                     )
 
                     predicted_labels = [
-                        label_map[idx] for idx in predicted_label_indices
+                        segment_vocab_train[idx] for idx in predicted_label_indices
                     ]
+
+                    L = [[t, label] for t, label in zip(predicted_boundary_ticks, predicted_labels)]
+                    L_postprocessed = label_preprocessor.postprocess_labels(L=L, label_map_out=label_map_val)
+                    predicted_labels = [label for t, label in L_postprocessed]
+
                     estimated_intervals_adj, predicted_labels = (
                         mir_eval.util.adjust_intervals(
                             estimated_intervals,
@@ -274,21 +261,65 @@ def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
 
                     # compute tick-wise label accuracy
                     true_segment_label_idxs = targets['segment_label_activations'][0]
-                    predicted_label_idxs = torch.argmax(outputs.function_outputs[0], dim=0)
-                    accuracy_numerator = sum(true_segment_label_idxs == predicted_label_idxs).item()
-                    accuracy_denominator = piano_rolls.shape[-1]
-                    accuracy = accuracy_numerator / accuracy_denominator
-                    total_label_accuracy += accuracy
+                    if label_map_train == label_map_val:
+                        predicted_label_idxs = torch.argmax(outputs.function_outputs[0], dim=0)
+                        accuracy_numerator = sum(true_segment_label_idxs == predicted_label_idxs).item()
+                        accuracy_denominator = piano_rolls.shape[-1]
+                        accuracy = accuracy_numerator / accuracy_denominator
+                        total_label_accuracy += accuracy
+                        accuracy_global_numerator += accuracy_numerator
+                        accuracy_global_denominator += accuracy_denominator
 
-                    accuracy_global_numerator += accuracy_numerator
-                    accuracy_global_denominator += accuracy_denominator
+                    true_labels_by_tick = [segment_vocab_val[x] for x in true_segment_label_idxs]
+                    predicted_labels_by_tick = []
+                    label = 'Start'
+                    for tick in range(piano_rolls.shape[-1]):
+                        if tick in predicted_boundary_ticks:
+                            tick_i = predicted_boundary_ticks.index(tick)
+                            label = predicted_labels[tick_i]
+                        predicted_labels_by_tick.append(label)
+                    a_numerator = sum([1 if a == b else 0 for a, b in zip(true_labels_by_tick, predicted_labels_by_tick)])
+                    a_denominator = piano_rolls.shape[-1]
+                    label_accuracy_after_segment_picking = a_numerator/a_denominator
+                    total_label_accuracy_after_segment_picking += label_accuracy_after_segment_picking
 
-            pbar.set_postfix({
-                "batch_loss": losses["total_loss"].item(),
-                "avg_loss": total_loss / num_batches,
-            })
+                    # Compute F1 for function labels
+                    # predicted_label_probabilities = torch.softmax(
+                    #     outputs.function_outputs.squeeze(), dim=-2
+                    # ).argmax(dim=-2)
+                    #
+                    # true_labels = targets["segment_label_activations"].squeeze()
 
-    metrics = {"loss": total_loss / num_batches}
+                    # predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
+                    # true_labels_flat = true_labels.view(-1)
+                    #
+                    # f1 = multiclass_f1_score(
+                    #     predicted_label_probabilities_flat,
+                    #     true_labels_flat,
+                    #     num_classes=len(label_map_val),
+                    #     average=None,
+                    # )
+
+                    f1 = multiclass_f1_score(
+                        torch.tensor([segment_vocab_val.index(x) for x in predicted_labels_by_tick]),
+                        torch.tensor([segment_vocab_val.index(x) for x in true_labels_by_tick]),
+                        num_classes=len(segment_vocab_val),
+                        average=None,
+                    )
+
+                    true_labels_set = set(true_labels_by_tick)
+                    for label_idx, label in enumerate(segment_vocab_val):
+                        if label in true_labels_set:
+                            label_f1 = f1[label_idx].item()
+                            total_label_f1[label] += label_f1
+
+            if label_map_val == label_map_train:
+                pbar.set_postfix({
+                    "batch_loss": losses["total_loss"].item(),
+                    "avg_loss": total_loss / num_batches,
+                })
+
+    metrics = {"loss": total_loss / num_batches} if label_map_val == label_map_train else {}
 
     if num_boundary_batches > 0:
         boundary_f1_global = utils.generic_F1(numerator=len(est_boundaries_global.intersection(gt_boundaries_global)),
@@ -313,12 +344,17 @@ def validate_tcn_model(model, val_loader, label_map, device, loss_fn,
         metrics["pairwise_recall"] = total_pairwise_recall / num_boundary_batches
         metrics["pairwise_f1"] = total_pairwise_f1 / num_boundary_batches
         metrics["nce"] = total_nce_f1 / num_boundary_batches
-        # for label in self.label_map:
-        #     metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
-        # # Average label F1
-        # metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in self.label_map])
+
+        # Label F1
+        for label in segment_vocab_val:
+            metrics[f"f1_{label}"] = total_label_f1[label] / num_boundary_batches
+
+        # Average label F1
+        # metrics["average_label_f1"] = np.mean([total_label_f1[label] / num_boundary_batches for label in label_map])
+
         metrics['label_accuracy'] = total_label_accuracy / num_boundary_batches
-        metrics['label_accuracy_global'] = accuracy_global_numerator / accuracy_global_denominator
-        metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['label_accuracy']) / 2
+        metrics['label_accuracy_global'] = accuracy_global_numerator / accuracy_global_denominator if accuracy_global_denominator != 0 else 0
+        metrics['label_accuracy_after_segment_picking'] = total_label_accuracy_after_segment_picking / num_boundary_batches
+        metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['label_accuracy_after_segment_picking']) / 2
 
     return metrics

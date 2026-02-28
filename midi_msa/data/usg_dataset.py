@@ -19,6 +19,7 @@ class USGMidiDataset(BaseMidiDataset):
                  window_half_ticks: int = 256,
                  pad_boundary_patches: bool = True,
                  segment_function_vocab: Optional[List[str]] = None,
+                 label_map: Optional[Dict[str, str]] = None,
                  compute_segment_labels: bool = True,
                  instrument_overtones: bool = True,
                  separate_drums: bool = True,
@@ -40,6 +41,7 @@ class USGMidiDataset(BaseMidiDataset):
             use_sslms=use_sslms,
             compute_segment_labels=compute_segment_labels,
             segment_function_vocab=segment_function_vocab,
+            label_map=label_map,
             midi_dir=midi_dir,
             annotation_dir=annotation_dir,
             midi_files=midi_files,
@@ -75,7 +77,7 @@ class USGMidiDataset(BaseMidiDataset):
             annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
             with open(annotation_path, "r") as f:
                 annotations = json.load(f)
-                annotations = preprocess_labels(annotations)
+                annotations = preprocess_labels(annotations, label_map=self.label_map)
             segment_qns = [ann[0] for ann in annotations]
             segment_labels = [ann[1] for ann in annotations]
             n_ticks = piano_roll.shape[-1]

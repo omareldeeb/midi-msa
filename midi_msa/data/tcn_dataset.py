@@ -17,6 +17,7 @@ class TCNMidiDataset(BaseMidiDataset):
         midi_files: Optional[List[str]] = None,
         target_ticks_per_beat: int = 4,
         segment_function_vocab: Optional[List[str]] = None,
+        label_map: Optional[Dict[str, str]] = None,
         compute_beats: bool = True,
         compute_downbeats: bool = True,
         compute_segment_labels: bool = True,
@@ -36,6 +37,7 @@ class TCNMidiDataset(BaseMidiDataset):
             use_sslms=use_sslms,
             compute_segment_labels=compute_segment_labels,
             segment_function_vocab=segment_function_vocab,
+            label_map=label_map,
             midi_dir=midi_dir,
             annotation_dir=annotation_dir,
             midi_files=midi_files,
@@ -167,7 +169,7 @@ class TCNMidiDataset(BaseMidiDataset):
         # Load annotations
         with open(annotation_path, "r") as f:
             annotations = json.load(f)
-            annotations = preprocess_labels(annotations)
+            annotations = preprocess_labels(annotations, label_map=self.label_map)
 
         segment_qns = [ann[0] for ann in annotations]
         segment_labels = [ann[1] for ann in annotations]

@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.label_preprocessor import LABEL_MAP
+from ..data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from ..evaluation.metrics import compute_metrics
 from .base_trainer import BaseTrainer
 from ..data.usg_dataset import USGMidiDataset
@@ -24,6 +24,9 @@ class USGTrainer(BaseTrainer):
         self.segment_criterion = (
             nn.CrossEntropyLoss() if cfg.compute_segment_labels else None
         )
+
+        self.segment_vocab_train = sorted(list(set(LABEL_MAP_TRAIN.values())))
+        self.segment_vocab_val = sorted(list(set(LABEL_MAP_VAL.values())))
 
     def lower_is_better(self) -> bool:
         return False  # validation metric should be maximized
@@ -62,7 +65,7 @@ class USGTrainer(BaseTrainer):
     def _create_dataloaders(self, files_dict: dict) -> Tuple:
         """Create train and validation dataloaders from a files dictionary."""
 
-        segment_vocab = sorted(list(set(LABEL_MAP.values())))
+
 
         assert self.cfg.use_sslm_near == self.cfg.use_sslm_far, 'USG method requires both or neither SSLMs'
 
@@ -72,7 +75,6 @@ class USGTrainer(BaseTrainer):
             'target_ticks_per_beat': self.cfg.target_ticks_per_beat,
             'window_half_ticks': self.cfg.window_half_ticks,
             'pad_boundary_patches': self.cfg.pad_boundary_patches,
-            'segment_function_vocab': segment_vocab,
             'compute_segment_labels': self.cfg.compute_segment_labels,
             'instrument_overtones': self.cfg.instrument_overtones,
             'separate_drums': self.cfg.separate_drums,
@@ -86,13 +88,14 @@ class USGTrainer(BaseTrainer):
                                        positive_oversampling_factor=self.cfg.positive_oversampling_factor,
                                        negative_undersampling_factor=self.cfg.negative_undersampling_factor,
                                        transpose_augmentation=self.cfg.transpose_augmentation,
+                                       segment_function_vocab=self.segment_vocab_train,
                                        **cfg_dict)
         dataset_val = USGMidiDataset(midi_files=files_dict['val'],
                                      positive_oversampling_factor=1,
                                      negative_undersampling_factor=1,
                                      transpose_augmentation=False,
+                                     segment_function_vocab=self.segment_vocab_val,
                                      **cfg_dict)
-
 
         # patch_data = create_piano_roll_patch_data(
         #     midi_dir=self.cfg.midi_dir,

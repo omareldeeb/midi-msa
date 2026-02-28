@@ -24,7 +24,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from midi_msa.data.label_preprocessor import LABEL_MAP
+from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from midi_msa.data.utils import create_piano_roll_fast, compute_sslms
 from midi_msa.models.tcn import TCN, TCNOutput
 
@@ -225,15 +225,15 @@ def main():
     print(f"Using device: {device}")
 
     # Build segment vocabulary
-    segment_vocab = sorted(list(set(LABEL_MAP.values())))
-    print(f"Segment vocabulary: {segment_vocab}")
+    model_segment_vocab = sorted(list(set(LABEL_MAP_TRAIN.values())))
+    print(f"Model's internal segment vocabulary (before post-processing): {model_segment_vocab}")
 
     # Load model
     print(f"Loading model from {args.checkpoint}...")
     model = load_tcn_model(
         args.checkpoint,
         device,
-        segment_vocab,
+        model_segment_vocab,
         use_sslm_near=args.use_sslm,
         use_sslm_far=args.use_sslm,
     )
@@ -256,7 +256,7 @@ def main():
             midi_path,
             model,
             device,
-            segment_vocab,
+            model_segment_vocab,
             target_ticks_per_beat=args.target_ticks_per_beat,
             threshold=args.threshold,
         )

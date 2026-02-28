@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from midi_msa.data.tcn_dataset import TCNMidiDataset
-from midi_msa.data.label_preprocessor import LABEL_MAP
+from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from midi_msa.models.tcn import TCN
 
 
@@ -422,7 +422,7 @@ def main():
 
     # Create dataset with same parameters as training
     print("Loading TCN Dataset...")
-    label_map = list(set(LABEL_MAP.values()))
+    label_map = list(set(LABEL_MAP_TRAIN.values()))
     label_map.sort()
     dataset = TCNMidiDataset(
         midi_dir=args.midi_dir,

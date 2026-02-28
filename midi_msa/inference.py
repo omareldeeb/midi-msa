@@ -30,7 +30,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from midi_msa.data.label_preprocessor import LABEL_MAP
+from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from midi_msa.data.utils import (
     compute_sslms,
     create_piano_roll_fast,
@@ -505,7 +505,7 @@ def main(cfg: DictConfig):
     print(f"Using device: {device}\n")
 
     # Build segment vocabulary
-    segment_vocab = sorted(list(set(LABEL_MAP.values())))
+    model_segment_vocab = sorted(list(set(LABEL_MAP_TRAIN.values())))
 
     # Build model
     print("Building model...")
@@ -562,7 +562,7 @@ def main(cfg: DictConfig):
                     errors.append({"file": file_id, "error": "Failed to process MIDI"})
                     continue
 
-                result = run_tcn_inference(model, sample, cfg, segment_vocab)
+                result = run_tcn_inference(model, sample, cfg, model_segment_vocab)
             else:  # USG
                 midi_data = process_midi_for_usg(
                     midi_path, cfg, device, piano_roll_dir, sslm_dir
@@ -572,7 +572,7 @@ def main(cfg: DictConfig):
                     continue
 
                 result = run_usg_inference(
-                    model, midi_data, cfg, device, segment_vocab
+                    model, midi_data, cfg, device, model_segment_vocab
                 )
 
             result["file"] = file_id

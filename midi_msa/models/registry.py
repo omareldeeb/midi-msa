@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 
 from .mobilenet_boundary_classifier import MobileNetBoundaryClassifier
 from .tcn import TCN
-from ..data.label_preprocessor import LABEL_MAP
+from ..data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 
 
 def build_model(cfg: DictConfig) -> nn.Module:
@@ -17,7 +17,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
         Initialized model
     """
     # Build segment vocabulary from label map
-    segment_vocab = sorted(list(set(LABEL_MAP.values())))
+    segment_vocab_train = sorted(list(set(LABEL_MAP_TRAIN.values())))
 
     if cfg.method == "usg":
         model = MobileNetBoundaryClassifier(
@@ -26,7 +26,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             use_sslm_near=cfg.use_sslm_near,
             use_sslm_far=cfg.use_sslm_far,
             output_features=cfg.output_features,
-            segment_function_vocab=segment_vocab,
+            segment_function_vocab=segment_vocab_train,
             compute_segment_labels=cfg.compute_segment_labels
         )
     elif cfg.method == "tcn":
@@ -35,7 +35,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             conv_filters=cfg.conv_filters,
             tcn_layers=cfg.tcn_layers,
             tcn_kernel_size=cfg.tcn_kernel_size,
-            segment_function_vocab=segment_vocab,
+            segment_function_vocab=segment_vocab_train,
             use_sslm_near=cfg.use_sslm_near,
             use_sslm_far=cfg.use_sslm_far,
             dropout_rate=cfg.dropout_rate,

@@ -25,6 +25,7 @@ class BaseMidiDataset(Dataset, ABC):
         use_sslms: bool = False,
         compute_segment_labels: bool = False,
         segment_function_vocab: Optional[List[str]] = None,
+        label_map: Optional[Dict[str, str]] = None,
         midi_dir: Union[str, Path] = '',
         annotation_dir: Union[str, Path] = '',
         midi_files: Optional[List[str]] = None,
@@ -39,6 +40,7 @@ class BaseMidiDataset(Dataset, ABC):
         self.use_sslms = use_sslms
         self.compute_segment_labels = compute_segment_labels
         self.segment_function_vocab = segment_function_vocab
+        self.label_map = label_map
 
         self.midi_dir = Path(midi_dir)
         self.annotation_dir = Path(annotation_dir)
@@ -87,7 +89,8 @@ class BaseMidiDataset(Dataset, ABC):
 
         # Build segment function vocabulary if not provided
         if segment_function_vocab is None and compute_segment_labels:
-            self.segment_function_vocab = self._build_segment_vocab()
+            raise ValueError('segment_function_vocab must be provided if compute_segment_labels is True')
+            # self.segment_function_vocab = self._build_segment_vocab()
         else:
             self.segment_function_vocab = segment_function_vocab
 

@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.label_preprocessor import LABEL_MAP
+from ..data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from ..data.tcn_dataset import TCNMidiDataset
 from ..evaluation.tcn_evaluation import validate_tcn_model
 from .base_trainer import BaseTrainer
@@ -22,7 +22,11 @@ class TCNTrainer(BaseTrainer):
         super().__init__(cfg, model, device)
 
         # Build segment vocabulary
-        self.label_map = sorted(list(set(LABEL_MAP.values())))
+        self.label_map_train = LABEL_MAP_TRAIN
+        self.label_map_val = LABEL_MAP_VAL
+
+        self.segment_function_vocab_train = sorted(list(set(self.label_map_train.values())))
+        self.segment_function_vocab_val = sorted(list(set(self.label_map_val.values())))
 
     def lower_is_better(self) -> bool:
         return False  # validation metric should be maximized
@@ -71,7 +75,6 @@ class TCNTrainer(BaseTrainer):
             "midi_dir": self.cfg.midi_dir,
             "annotation_dir": self.cfg.annotation_dir,
             "piano_roll_dir": self.cfg.piano_roll_dir,
-            "segment_function_vocab": self.label_map,
             "target_ticks_per_beat": self.cfg.target_ticks_per_beat,
             "compute_beats": self.cfg.compute_beats,
             "compute_downbeats": self.cfg.compute_downbeats,
@@ -83,11 +86,15 @@ class TCNTrainer(BaseTrainer):
         train_dataset = TCNMidiDataset(
             midi_files=train_files, sslm_dir=self.cfg.sslm_dir,
             transpose_augmentation=self.cfg.transpose_augmentation,
+            segment_function_vocab=self.segment_function_vocab_train,
+            label_map=self.label_map_train,
             **dataset_args
         )
         val_dataset = TCNMidiDataset(
             midi_files=val_files, sslm_dir=self.cfg.sslm_dir,
             transpose_augmentation=False,
+            segment_function_vocab=self.segment_function_vocab_val,
+            label_map=self.label_map_val,
             **dataset_args
         )
 
@@ -132,7 +139,7 @@ class TCNTrainer(BaseTrainer):
         sim_max, _ = sim.max(dim=1, keepdim=True)
         sim = sim - sim_max  # numerical stability
 
-        labels = torch.tensor([self.label_map.index(x) for x in labels], device=sim.device)
+        labels = torch.tensor([self.segment_function_vocab_train.index(x) for x in labels], device=sim.device)
         mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # positives
         # pos_counts = mask.sum(dim=1)
         # valid = pos_counts > 0
@@ -265,7 +272,10 @@ class TCNTrainer(BaseTrainer):
         """Validate for one epoch."""
         return validate_tcn_model(model=self.model,
                                   val_loader=val_loaders[0],
-                                  label_map=self.label_map,
+                                  label_map_train=self.label_map_train,
+                                  segment_vocab_train=self.segment_function_vocab_train,
+                                  label_map_val=self.label_map_val,
+                                  segment_vocab_val=self.segment_function_vocab_val,
                                   device=self.device,
                                   loss_fn=self.compute_loss,
                                   boundary_f1_discard_first_and_last=boundary_f1_discard_first_and_last
