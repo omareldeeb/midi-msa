@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from ..data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
 from ..evaluation.metrics import compute_metrics
+from ..evaluation.usg_evaluation import validate_usg_model
 from .base_trainer import BaseTrainer
 from ..data.usg_dataset import USGMidiDataset
 
@@ -25,6 +26,8 @@ class USGTrainer(BaseTrainer):
             nn.CrossEntropyLoss() if cfg.compute_segment_labels else None
         )
 
+        self.label_map_train = LABEL_MAP_TRAIN
+        self.label_map_val = LABEL_MAP_VAL
         self.segment_vocab_train = sorted(list(set(LABEL_MAP_TRAIN.values())))
         self.segment_vocab_val = sorted(list(set(LABEL_MAP_VAL.values())))
 
@@ -65,8 +68,6 @@ class USGTrainer(BaseTrainer):
     def _create_dataloaders(self, files_dict: dict) -> Tuple:
         """Create train and validation dataloaders from a files dictionary."""
 
-
-
         assert self.cfg.use_sslm_near == self.cfg.use_sslm_far, 'USG method requires both or neither SSLMs'
 
         cfg_dict = {
@@ -89,12 +90,14 @@ class USGTrainer(BaseTrainer):
                                        negative_undersampling_factor=self.cfg.negative_undersampling_factor,
                                        transpose_augmentation=self.cfg.transpose_augmentation,
                                        segment_function_vocab=self.segment_vocab_train,
+                                       label_map=self.label_map_train,
                                        **cfg_dict)
         dataset_val = USGMidiDataset(midi_files=files_dict['val'],
                                      positive_oversampling_factor=1,
                                      negative_undersampling_factor=1,
                                      transpose_augmentation=False,
                                      segment_function_vocab=self.segment_vocab_val,
+                                     label_map=self.label_map_val,
                                      **cfg_dict)
 
         # patch_data = create_piano_roll_patch_data(
@@ -192,7 +195,7 @@ class USGTrainer(BaseTrainer):
 
         # Return val loaders as iterable of (name, dataloader) tuples
         # val_loaders = [("tubb", val_loader_tubb), ("non_tubb", val_loader_non_tubb)]
-        val_loaders = [('val', val_loader)]
+        val_loaders = (val_loader,)
 
         return train_loader, val_loaders
 
@@ -221,8 +224,10 @@ class USGTrainer(BaseTrainer):
             loss = boundary_loss
 
             if "segment_label_logits" in output and "segment_label_target" in batch:
+                batch_segment_label_target = batch["segment_label_target"].long()
+                # batch_segment_label_target = torch.where(batch['targets'].squeeze(-1) == 1, batch_segment_label_target, -100)
                 segment_loss = self.segment_criterion(
-                    output["segment_label_logits"], batch["segment_label_target"].long()
+                    output["segment_label_logits"], batch_segment_label_target
                 )
                 loss = loss + self.cfg.segment_label_loss_weight * segment_loss
 
@@ -246,6 +251,20 @@ class USGTrainer(BaseTrainer):
         return {"loss": avg_loss}
 
     def validate_epoch(self, val_loaders) -> Dict[str, float]:
+        """Validate for one epoch."""
+        return validate_usg_model(model=self.model,
+                                  val_loader=val_loaders[0],
+                                  label_map_train=self.label_map_train,
+                                  segment_vocab_train=self.segment_vocab_train,
+                                  label_map_val=self.label_map_val,
+                                  segment_vocab_val=self.segment_vocab_val,
+                                  device=self.device,
+                                  boundary_criterion=self.boundary_criterion,
+                                  segment_criterion=self.segment_criterion,
+                                  segment_label_loss_weight=self.cfg.segment_label_loss_weight,
+                                  )
+
+    def validate_epoch_old(self, val_loaders) -> Dict[str, float]:
         """Validate on all validation loaders.
 
         Args:

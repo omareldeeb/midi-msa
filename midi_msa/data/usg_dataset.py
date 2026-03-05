@@ -90,7 +90,8 @@ class USGMidiDataset(BaseMidiDataset):
                                       'end_tick': m + self.window_half_ticks,
                                       'center_tick': m,
                                       'is_boundary': m in segment_ticks,
-                                      'label': None
+                                      'label': None,
+                                      'n_ticks_in_file': n_ticks,
                                       }
                     if self.compute_segment_labels:
                         label_idx = bisect.bisect_right(segment_ticks, m) - 1
@@ -180,4 +181,5 @@ class USGMidiDataset(BaseMidiDataset):
             sslm_far_patch = padded_sslm_far[..., patch_metadata['center_tick']: patch_metadata['center_tick'] + 2*self.window_half_ticks]
             item["sslm_far_patch"] = sslm_far_patch
 
+        item['patch_metadata'] = patch_metadata
         return item

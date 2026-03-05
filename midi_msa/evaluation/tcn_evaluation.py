@@ -122,16 +122,6 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                 predicted_boundary_ticks = [int(x) for x in predicted_boundary_ticks]
                 if predicted_boundary_ticks and predicted_boundary_ticks[-1] != t_max + 1:
                     predicted_boundary_ticks.append(t_max + 1)
-                estimated_intervals = np.column_stack(
-                    (
-                        predicted_boundary_ticks[:-1],
-                        predicted_boundary_ticks[1:],
-                    )
-                )
-
-                if len(estimated_intervals) == 0:
-                    print('No intervals predicted. Skipping boundary and label computations for this batch item.')
-                    continue
 
                 gt_boundary_ticks = [int(x) for x in batch.get('segment_ticks_in_piano_roll')]
                 assert 0 in gt_boundary_ticks, 'gt_boundary_ticks lacks tick 0'
@@ -163,6 +153,17 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                             gt_boundaries_global.add((x, file_id))
                     else:
                         gt_boundaries_global.add((x, file_id))
+
+                estimated_intervals = np.column_stack(
+                    (
+                        predicted_boundary_ticks[:-1],
+                        predicted_boundary_ticks[1:],
+                    )
+                )
+
+                if len(estimated_intervals) == 0:
+                    print('No intervals predicted. Skipping boundary and label computations for this batch item.')
+                    continue
 
                 try:
                     # Boundary detection metrics
@@ -270,6 +271,7 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                         accuracy_global_numerator += accuracy_numerator
                         accuracy_global_denominator += accuracy_denominator
 
+                    # compute tick-wise label accuracy after segment labeling
                     true_labels_by_tick = [segment_vocab_val[x] for x in true_segment_label_idxs]
                     predicted_labels_by_tick = []
                     label = 'Start'
@@ -284,22 +286,6 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                     total_label_accuracy_after_segment_picking += label_accuracy_after_segment_picking
 
                     # Compute F1 for function labels
-                    # predicted_label_probabilities = torch.softmax(
-                    #     outputs.function_outputs.squeeze(), dim=-2
-                    # ).argmax(dim=-2)
-                    #
-                    # true_labels = targets["segment_label_activations"].squeeze()
-
-                    # predicted_label_probabilities_flat = predicted_label_probabilities.view(-1)
-                    # true_labels_flat = true_labels.view(-1)
-                    #
-                    # f1 = multiclass_f1_score(
-                    #     predicted_label_probabilities_flat,
-                    #     true_labels_flat,
-                    #     num_classes=len(label_map_val),
-                    #     average=None,
-                    # )
-
                     f1 = multiclass_f1_score(
                         torch.tensor([segment_vocab_val.index(x) for x in predicted_labels_by_tick]),
                         torch.tensor([segment_vocab_val.index(x) for x in true_labels_by_tick]),
