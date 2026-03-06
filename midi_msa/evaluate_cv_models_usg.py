@@ -181,6 +181,14 @@ def evaluate_split(
             boundary_logits = output["boundary_logits"]
             boundary_loss = boundary_criterion(boundary_logits, batch["targets"].float())
 
+            if "segment_label_logits" in output and "segment_label_target" in batch:
+                segment_logits = output["segment_label_logits"]
+                segment_criterion = torch.nn.CrossEntropyLoss()
+                segment_loss = segment_criterion(segment_logits, batch["segment_label_target"].long())
+                boundary_loss += segment_loss
+                predicted_labels = torch.argmax(torch.softmax(segment_logits, dim=1), dim=1)
+                print(f"Predicted segment labels: {predicted_labels.cpu().numpy()}, ground truth: {batch['segment_label_target'].cpu().numpy()}")
+
             val_outputs.append(boundary_logits)
             val_targets.append(batch["targets"])
             val_loss += boundary_loss.item()
