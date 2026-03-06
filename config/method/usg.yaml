@@ -18,6 +18,7 @@ patch_normalize: false
 # USG-specific model parameters
 pretrained: true
 output_features: 64
+dropout_rate: 0.2
 num_targets: 1
 
 # Multi-task learning

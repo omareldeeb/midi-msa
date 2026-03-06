@@ -7,16 +7,19 @@ import torchvision.models
 # Simple CNN boundary classifier
 class MobileNetBoundaryClassifier(nn.Module):
     def __init__(self, num_targets=1, pretrained=True, use_sslm_near=False, use_sslm_far=False, output_features=64,
-                 segment_function_vocab: Optional[List[str]] = None, compute_segment_labels: bool = False):
+                 segment_function_vocab: Optional[List[str]] = None, compute_segment_labels: bool = False,
+                 dropout_rate: float = 0.2):
         super().__init__()
 
         self.segment_function_vocab = segment_function_vocab
         self.compute_segment_labels = compute_segment_labels
         self.num_segment_classes = len(segment_function_vocab) if segment_function_vocab is not None else 0
         self.pretrained = pretrained
+        self.dropout_rate = dropout_rate
 
         weights = torchvision.models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         piano_roll_model = torchvision.models.mobilenet_v3_small(weights=weights)
+        self._set_backbone_dropout(piano_roll_model)
         if True:  # use_sslm_near or use_sslm_far or (segment_function_vocab is not None and self.compute_segment_labels):
             piano_roll_model.classifier[-1] = nn.Sequential(
                 nn.Linear(piano_roll_model.classifier[-1].in_features, output_features),
@@ -32,6 +35,7 @@ class MobileNetBoundaryClassifier(nn.Module):
 
         if use_sslm_near:
             sslm_near_model = torchvision.models.mobilenet_v3_small(weights=weights)
+            self._set_backbone_dropout(sslm_near_model)
             sslm_near_model.classifier[-1] = nn.Sequential(
                 nn.Linear(sslm_near_model.classifier[-1].in_features, output_features),
                 nn.ReLU(),
@@ -57,6 +61,7 @@ class MobileNetBoundaryClassifier(nn.Module):
 
         if use_sslm_far:
             sslm_far_model = torchvision.models.mobilenet_v3_small(weights=weights)
+            self._set_backbone_dropout(sslm_far_model)
             sslm_far_model.classifier[-1] = nn.Sequential(
                 nn.Linear(sslm_far_model.classifier[-1].in_features, output_features),
                 nn.ReLU(),
@@ -87,7 +92,7 @@ class MobileNetBoundaryClassifier(nn.Module):
             self.boundary_classifier = nn.Sequential(
                 nn.Linear(output_features_total, 128),
                 nn.ReLU(),
-                nn.Dropout(0.2),
+                nn.Dropout(dropout_rate),
                 nn.Linear(128, num_targets)
             )
 
@@ -96,9 +101,14 @@ class MobileNetBoundaryClassifier(nn.Module):
             self.segment_label_classifier = nn.Sequential(
                 nn.Linear(output_features_total, 128),
                 nn.ReLU(),
-                nn.Dropout(0.2),
+                nn.Dropout(dropout_rate),
                 nn.Linear(128, self.num_segment_classes)
             )
+
+    def _set_backbone_dropout(self, model: nn.Module) -> None:
+        for module in model.modules():
+            if isinstance(module, nn.Dropout):
+                module.p = self.dropout_rate
 
     def forward(self, piano_roll_patch: torch.Tensor, sslm_near_patch: Optional[torch.Tensor] = None, sslm_far_patch: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         piano_roll_output = self.piano_roll_model(piano_roll_patch)

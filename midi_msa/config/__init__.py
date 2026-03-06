@@ -76,6 +76,7 @@ class USGConfig(BaseConfig):
     # USG-specific model parameters
     pretrained: bool = False
     output_features: int = 64
+    dropout_rate: float = 0.2
     num_targets: int = 1
 
     # Multi-task learning
