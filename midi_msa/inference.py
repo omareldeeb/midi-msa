@@ -82,6 +82,7 @@ class InferenceConfig:
     tcn_layers: int = 2
     tcn_kernel_size: int = 5
     conv_filters: int = 20
+    function_output_activation: str = "softmax"
 
     # Prediction parameters
     boundary_threshold: float = 0.5  # Threshold for boundary detection
@@ -367,7 +368,10 @@ def run_tcn_inference(
     boundary_probs = torch.sigmoid(outputs.segment_output).squeeze().cpu().numpy()
 
     # Get function predictions
-    function_probs = torch.softmax(outputs.function_outputs, dim=1).squeeze().cpu().numpy()
+    if cfg.function_output_activation == "sigmoid":
+        function_probs = torch.sigmoid(outputs.function_outputs).squeeze().cpu().numpy()
+    else:
+        function_probs = torch.softmax(outputs.function_outputs, dim=1).squeeze().cpu().numpy()
 
     # Find boundaries above threshold
     boundary_ticks = np.where(boundary_probs > cfg.boundary_threshold)[0]

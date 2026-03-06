@@ -92,6 +92,7 @@ def process_midi_file(
     segment_vocab: List[str],
     target_ticks_per_beat: int = 4,
     threshold: float = 0.5,
+    function_activation: str = "softmax",
 ) -> Optional[Dict]:
     """
     Process a single MIDI file through the TCN model.
@@ -150,7 +151,10 @@ def process_midi_file(
 
         # Decode predictions using model's compute_predictions method
         boundary_ticks, label_indices = model.compute_predictions(
-            output, measure_ticks_tensor, threshold=threshold
+            output,
+            measure_ticks_tensor,
+            threshold=threshold,
+            function_activation=function_activation,
         )
 
         # Convert to labels
@@ -211,6 +215,12 @@ def main():
         action="store_true",
         help="Use SSLM features (requires model trained with SSLMs)",
     )
+    parser.add_argument(
+        "--function-activation",
+        choices=["softmax", "sigmoid"],
+        default=None,
+        help="Function head decoding activation (default: checkpoint config or softmax)",
+    )
 
     args = parser.parse_args()
 
@@ -239,6 +249,12 @@ def main():
     )
     print(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    checkpoint_activation = None
+    if isinstance(checkpoint, dict) and "config" in checkpoint:
+        checkpoint_activation = checkpoint["config"].get("function_output_activation")
+    function_activation = args.function_activation or checkpoint_activation or "softmax"
+
     # Find MIDI files
     midi_files = find_midi_files(args.input_dir)
     print(f"Found {len(midi_files)} MIDI files")
@@ -259,6 +275,7 @@ def main():
             model_segment_vocab,
             target_ticks_per_beat=args.target_ticks_per_beat,
             threshold=args.threshold,
+            function_activation=function_activation,
         )
 
         if result is not None:

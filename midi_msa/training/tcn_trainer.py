@@ -195,10 +195,25 @@ class TCNTrainer(BaseTrainer):
                 model_output.function_outputs.permute(0, 2, 1).reshape(-1, num_classes)
             )
             function_targets = targets["segment_label_activations"].reshape(-1)
-
-            function_loss = nn.functional.cross_entropy(
-                function_outputs, function_targets, ignore_index=-100
-            )
+            if self.cfg.function_output_activation == "sigmoid":
+                valid_mask = function_targets != -100
+                if valid_mask.any():
+                    function_target_multi = torch.zeros_like(function_outputs)
+                    function_target_multi[valid_mask, function_targets[valid_mask].long()] = 1.0
+                    raw_loss = nn.functional.binary_cross_entropy_with_logits(
+                        function_outputs,
+                        function_target_multi,
+                        reduction="none",
+                    )
+                    function_loss = (
+                        raw_loss * valid_mask.unsqueeze(1)
+                    ).sum() / (valid_mask.sum() * num_classes)
+                else:
+                    function_loss = function_outputs.sum() * 0.0
+            else:
+                function_loss = nn.functional.cross_entropy(
+                    function_outputs, function_targets, ignore_index=-100
+                )
             losses["function_loss"] = function_loss
             weighted_losses["function_loss"] = (
                 function_loss * self.cfg.function_loss_weight

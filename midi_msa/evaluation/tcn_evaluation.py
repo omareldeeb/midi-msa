@@ -12,7 +12,8 @@ from ..data import label_preprocessor
 
 def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, label_map_val, segment_vocab_val,
                        device, loss_fn,
-                       boundary_f1_discard_first_and_last: bool) -> Dict[str, float]:
+                       boundary_f1_discard_first_and_last: bool,
+                       function_activation: str = "softmax") -> Dict[str, float]:
     model.eval()
 
     total_loss = 0.0
@@ -114,7 +115,9 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
             if measure_ticks is not None and "segment_activation" in targets:
                 predicted_boundary_ticks, predicted_label_indices = (
                     model.compute_predictions(
-                        output=outputs, measure_ticks=measure_ticks
+                        output=outputs,
+                        measure_ticks=measure_ticks,
+                        function_activation=function_activation
                     )
                 )
 

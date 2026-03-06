@@ -299,10 +299,19 @@ class TCN(nn.Module):
             segment_embeddings=segment_embeddings,
         )
 
-    def compute_predictions_for_visualization(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_predictions_for_visualization(
+        self,
+        output: TCNOutput,
+        measure_ticks: torch.Tensor,
+        threshold: float = 0.5,
+        function_activation: str = "softmax",
+    ) -> Tuple[np.ndarray, np.ndarray]:
         measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
         pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
-        pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
+        if function_activation == "sigmoid":
+            pred_function_probs = torch.sigmoid(output.function_outputs).squeeze(0).cpu().numpy()
+        else:
+            pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
 
         pred_boundary_ticks = []
         pred_labels = []
@@ -330,10 +339,19 @@ class TCN(nn.Module):
 
         return np.array(pred_boundary_ticks), np.array(pred_labels)
 
-    def compute_predictions(self, output: TCNOutput, measure_ticks: torch.Tensor, threshold: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_predictions(
+        self,
+        output: TCNOutput,
+        measure_ticks: torch.Tensor,
+        threshold: float = 0.5,
+        function_activation: str = "softmax",
+    ) -> Tuple[np.ndarray, np.ndarray]:
         measure_ticks_np = measure_ticks.long().squeeze(0).cpu().numpy()
         pred_boundary_probs = torch.sigmoid(output.segment_output).squeeze(0).cpu().numpy()
-        pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
+        if function_activation == "sigmoid":
+            pred_function_probs = torch.sigmoid(output.function_outputs).squeeze(0).cpu().numpy()
+        else:
+            pred_function_probs = torch.softmax(output.function_outputs, dim=1).squeeze(0).cpu().numpy()
         total_ticks = pred_boundary_probs.shape[-1]
 
         # First, find all segments

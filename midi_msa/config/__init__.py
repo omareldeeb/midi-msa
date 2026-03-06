@@ -110,6 +110,7 @@ class TCNConfig(BaseConfig):
     section_loss_weight: float = 10.0
     function_loss_weight: float = 1.0
     contrastive_loss_weight: float = 0.0
+    function_output_activation: str = "softmax"
 
 def register_configs():
     """Register structured configs with Hydra."""
