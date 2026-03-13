@@ -16,6 +16,8 @@ pad_boundary_patches: true
 patch_normalize: false
 
 # USG-specific model parameters
+usg_architecture: usg_original  # usg_original (Grill & Schlueter 2015 model D) or mobilenet
+usg_patch_freq_bins: 128
 pretrained: true
 output_features: 64
 dropout_rate: 0.2

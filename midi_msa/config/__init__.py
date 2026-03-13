@@ -74,6 +74,8 @@ class USGConfig(BaseConfig):
     patch_normalize: bool = False
 
     # USG-specific model parameters
+    usg_architecture: str = "usg_original"  # "usg_original" (paper model) or "mobilenet"
+    usg_patch_freq_bins: int = 128
     pretrained: bool = False
     output_features: int = 64
     dropout_rate: float = 0.2

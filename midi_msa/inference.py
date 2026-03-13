@@ -75,6 +75,8 @@ class InferenceConfig:
     num_targets: int = 1
 
     # USG model parameters
+    usg_architecture: str = "usg_original"
+    usg_patch_freq_bins: int = 128
     pretrained: bool = False
     output_features: int = 64
 
