@@ -1,0 +1,46 @@
+# Inference configuration for MIDI Music Structure Analysis
+# Usage: python -m midi_msa.inference input_dir=/path/to/midi checkpoint=/path/to/model.pt
+
+# Method selection: "tcn" or "usg"
+method: tcn
+
+# Input/Output paths (required)
+input_dir: "/Users/omar/Downloads/test_inference"  # Directory containing MIDI files to analyze
+checkpoint: "/Users/omar/Documents/Projects/midi-msa/checkpoints/best_checkpoint.pt"  # Path to trained model checkpoint
+output_dir: inference_results  # Directory to save results
+
+# Optional cache paths (speeds up processing of large datasets)
+piano_roll_dir: /Volumes/ExtremePro/piano_roll_dir  # Cache directory for piano rolls
+sslm_dir: /Volumes/ExtremePro/sslm_dir  # Cache directory for SSLM features
+
+# Processing parameters
+save_every: 100  # Save intermediate results every N files
+device: auto  # "auto", "cpu", "cuda", or "mps"
+
+# Piano roll parameters (should match training config)
+target_ticks_per_beat: 4
+num_gm_families: 16
+instrument_overtones: true
+separate_drums: true
+
+# SSLM parameters (should match training config)
+use_sslm_near: true
+use_sslm_far: true
+
+# USG-specific parameters (only used when method=usg)
+window_half_ticks: 256
+patch_normalize: false
+num_targets: 1
+usg_architecture: usg_original
+usg_patch_freq_bins: 128
+pretrained: false
+output_features: 64
+
+# TCN-specific parameters (only used when method=tcn)
+tcn_layers: 5
+tcn_kernel_size: 3
+conv_filters: 20
+function_output_activation: softmax
+
+# Prediction parameters
+boundary_threshold: 0.1  # Threshold for boundary detection (0-1)
