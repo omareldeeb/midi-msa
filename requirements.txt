@@ -1,9 +1,11 @@
+hydra-core
+omegaconf
+wandb
 mido
-matplotlib
 numpy
-pandas
+scipy
 tqdm
 torch
 torchvision
-tensorboard
-librosa
+mir_eval
+matplotlib
