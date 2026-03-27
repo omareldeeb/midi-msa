@@ -44,12 +44,12 @@ class TCNTrainer(BaseTrainer):
         else:
             # Auto-split from all files
             all_files = glob.glob(
-                str(Path(self.cfg.annotation_dir) / "*_labels_coarse_qn.json")
+                str(Path(self.cfg.annotation_dir) / "*_functions_qn.json")
             )
             np.random.shuffle(all_files)
 
             file_ids = [
-                Path(f).stem.replace("_labels_coarse_qn", "") for f in all_files
+                Path(f).stem.replace("_functions_qn", "") for f in all_files
             ]
             split_idx = int(len(file_ids) * (1 - self.cfg.val_split))
             train_files = file_ids[:split_idx]
