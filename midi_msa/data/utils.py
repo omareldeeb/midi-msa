@@ -1492,6 +1492,18 @@ def extract_peaks(events, threshold=0.5):
     return torch.where(b_exceeds_threshold & b_exceeds_left_neighbor & b_exceeds_right_neighbor)[0]
 
 
+def load_annotation(p: str):
+    """p a path to an annotation txt file"""
+    res = []
+    with open(p) as infile:
+        lines = infile.readlines()
+    for line in lines:
+        line = line.split('\t')
+        line[1] = line[1].rstrip('\n')
+        res.append([float(line[0]), str(line[1])])
+    return res
+
+
 def generic_precision(numerator, n_retrieved):
     if n_retrieved == 0:
         return 0

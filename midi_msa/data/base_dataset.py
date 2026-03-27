@@ -55,8 +55,8 @@ class BaseMidiDataset(Dataset, ABC):
 
         # Get all annotation files and extract MIDI file IDs
         if midi_files is None:
-            annotation_files = glob.glob(str(self.annotation_dir / "*_labels_coarse_qn.json"))
-            self.midi_file_ids = [Path(f).stem.replace("_labels_coarse_qn", "") for f in annotation_files]
+            annotation_files = glob.glob(str(self.annotation_dir / "*_functions_qn.json"))
+            self.midi_file_ids = [Path(f).stem.replace("_functions_qn", "") for f in annotation_files]
         else:
             self.midi_file_ids = midi_files
 
@@ -64,7 +64,7 @@ class BaseMidiDataset(Dataset, ABC):
         valid_file_ids = []
         for file_id in tqdm(self.midi_file_ids, desc="Validating files"):
             midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
-            annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
+            annotation_path = self.annotation_dir / f"{file_id}_functions_qn.json"
             piano_roll_cache_path = utils.get_piano_roll_cache_path(file_id=file_id,
                                                                     piano_roll_dir=self.piano_roll_dir,
                                                                     target_ticks_per_beat=self.target_ticks_per_beat)
@@ -103,7 +103,7 @@ class BaseMidiDataset(Dataset, ABC):
         vocab = set()
 
         for file_id in tqdm(self.midi_file_ids, desc="Building segment vocabulary"):
-            annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
+            annotation_path = self.annotation_dir / f"{file_id}_functions_qn.json"
             with open(annotation_path, "r") as f:
                 annotations = json.load(f)
 

@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Union
 import torch
 
 from .base_dataset import BaseMidiDataset
-from .utils import widen_temporal_events, get_piano_roll_cache_path, get_sslm_cache_path, compute_sslms_from_midi_path
+from .utils import widen_temporal_events, get_piano_roll_cache_path, get_sslm_cache_path, compute_sslms_from_midi_path, load_annotation
 from .label_preprocessor import preprocess_labels
 
 
@@ -63,7 +63,7 @@ class TCNMidiDataset(BaseMidiDataset):
         file_id = self.midi_file_ids[idx]
 
         # Paths
-        annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
+        annotation_path = self.annotation_dir / f"{file_id}_functions_qn.json"
 
         # Check for cached piano roll
         cache_path = get_piano_roll_cache_path(file_id, self.piano_roll_dir, self.target_ticks_per_beat)
@@ -167,9 +167,8 @@ class TCNMidiDataset(BaseMidiDataset):
         sample["measure_ticks"] = torch.tensor(measure_ticks, dtype=torch.long)
         
         # Load annotations
-        with open(annotation_path, "r") as f:
-            annotations = json.load(f)
-            annotations = preprocess_labels(annotations, label_map=self.label_map)
+        annotations = load_annotation(annotation_path)
+        annotations = preprocess_labels(annotations, label_map=self.label_map)
 
         segment_qns = [ann[0] for ann in annotations]
         segment_labels = [ann[1] for ann in annotations]

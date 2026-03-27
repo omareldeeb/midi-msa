@@ -74,10 +74,9 @@ class USGMidiDataset(BaseMidiDataset):
             piano_roll_dict = self.get_piano_roll_dict(file_id=file_id)
             measure_ticks = piano_roll_dict['measure_ticks']
             piano_roll = piano_roll_dict['piano_roll']
-            annotation_path = self.annotation_dir / f"{file_id}_labels_coarse_qn.json"
-            with open(annotation_path, "r") as f:
-                annotations = json.load(f)
-                annotations = preprocess_labels(annotations, label_map=self.label_map)
+            annotation_path = self.annotation_dir / f"{file_id}_functions_qn.json"
+            annotations = utils.load_annotation(annotation_path)
+            annotations = preprocess_labels(annotations, label_map=self.label_map)
             segment_qns = [ann[0] for ann in annotations]
             segment_labels = [ann[1] for ann in annotations]
             n_ticks = piano_roll.shape[-1]
