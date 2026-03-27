@@ -1,4 +1,3 @@
-from .base_trainer import BaseTrainer
 from .usg_trainer import USGTrainer
 from .tcn_trainer import TCNTrainer
 

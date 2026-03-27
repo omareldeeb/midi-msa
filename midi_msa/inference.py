@@ -16,12 +16,10 @@ Usage:
     python -m midi_msa.inference input_dir=/path/to/midi checkpoint=/path/to/checkpoint.pt output_dir=results save_every=100
 """
 
-import glob
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import hydra
 import numpy as np
@@ -30,7 +28,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
+from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN
 from midi_msa.data.utils import (
     compute_sslms,
     create_piano_roll_fast,

@@ -4,7 +4,7 @@ from omegaconf import DictConfig
 from .mobilenet_boundary_classifier import MobileNetBoundaryClassifier
 from .usg_boundary_classifier import USGBoundaryClassifier
 from .tcn import TCN
-from ..data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
+from ..data.label_preprocessor import LABEL_MAP_TRAIN
 
 
 def build_model(cfg: DictConfig) -> nn.Module:

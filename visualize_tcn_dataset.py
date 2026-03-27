@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from midi_msa.data.tcn_dataset import TCNMidiDataset
-from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN, LABEL_MAP_VAL
+from midi_msa.data.label_preprocessor import LABEL_MAP_TRAIN
 from midi_msa.models.tcn import TCN
 
 
