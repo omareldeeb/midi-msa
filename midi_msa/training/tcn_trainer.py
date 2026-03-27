@@ -293,7 +293,8 @@ class TCNTrainer(BaseTrainer):
                                   segment_vocab_val=self.segment_function_vocab_val,
                                   device=self.device,
                                   loss_fn=self.compute_loss,
-                                  boundary_f1_discard_first_and_last=boundary_f1_discard_first_and_last
+                                  boundary_f1_discard_first_and_last=boundary_f1_discard_first_and_last,
+                                  function_activation=self.cfg.function_output_activation,
                                   )
 
     def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
