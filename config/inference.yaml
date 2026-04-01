@@ -6,7 +6,7 @@ method: tcn
 
 # Input/Output paths (required)
 input_dir: "/Users/omar/Downloads/test_inference"  # Directory containing MIDI files to analyze
-checkpoint: "/Users/omar/Documents/Projects/midi-msa/checkpoints/best_checkpoint.pt"  # Path to trained model checkpoint
+checkpoint: "/Users/omar/Downloads/best_checkpoint.pt"  # Path to trained model checkpoint
 output_dir: inference_results  # Directory to save results
 
 # Optional cache paths (speeds up processing of large datasets)
@@ -16,6 +16,7 @@ sslm_dir: /Volumes/ExtremePro/sslm_dir  # Cache directory for SSLM features
 # Processing parameters
 save_every: 100  # Save intermediate results every N files
 device: auto  # "auto", "cpu", "cuda", or "mps"
+use_checkpoint_config: true  # Load model/data settings from checkpoint config when available
 
 # Piano roll parameters (should match training config)
 target_ticks_per_beat: 4
@@ -27,6 +28,10 @@ separate_drums: true
 use_sslm_near: true
 use_sslm_far: true
 
+# Shared model parameters
+dropout_rate: 0.1
+compute_segment_labels: true
+
 # USG-specific parameters (only used when method=usg)
 window_half_ticks: 256
 patch_normalize: false
@@ -37,10 +42,10 @@ pretrained: false
 output_features: 64
 
 # TCN-specific parameters (only used when method=tcn)
-tcn_layers: 5
-tcn_kernel_size: 3
+tcn_layers: 11
+tcn_kernel_size: 5
 conv_filters: 20
 function_output_activation: softmax
 
 # Prediction parameters
-boundary_threshold: 0.1  # Threshold for boundary detection (0-1)
+boundary_threshold: 0.5  # Threshold for boundary detection (0-1)
