@@ -28,6 +28,7 @@ class BaseMidiDataset(Dataset, ABC):
         label_map: Optional[Dict[str, str]] = None,
         midi_dir: Union[str, Path] = '',
         annotation_dir: Union[str, Path] = '',
+        extra_midi_dir: Union[str, Path] = '',
         midi_files: Optional[List[str]] = None,
         piano_roll_dir: Optional[Union[str, Path]] = None,
         sslm_dir: Optional[Union[str, Path]] = None,
@@ -44,6 +45,7 @@ class BaseMidiDataset(Dataset, ABC):
 
         self.midi_dir = Path(midi_dir)
         self.annotation_dir = Path(annotation_dir)
+        self.extra_midi_dir = Path(extra_midi_dir)
         self.piano_roll_dir = Path(piano_roll_dir) if piano_roll_dir else None
         self.sslm_dir = Path(sslm_dir) if sslm_dir else None
 
@@ -63,7 +65,7 @@ class BaseMidiDataset(Dataset, ABC):
         # Filter out files that don't have both MIDI (or cached piano roll + sslms) and annotation
         valid_file_ids = []
         for file_id in tqdm(self.midi_file_ids, desc="Validating files"):
-            midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+            midi_path = utils.get_midi_path(file_id=file_id, midi_dirs=[self.midi_dir, self.extra_midi_dir])
             annotation_path = self.annotation_dir / f"{file_id}_functions_qn.json"
             piano_roll_cache_path = utils.get_piano_roll_cache_path(file_id=file_id,
                                                                     piano_roll_dir=self.piano_roll_dir,
@@ -149,7 +151,7 @@ class BaseMidiDataset(Dataset, ABC):
 
     def _compute_piano_roll(self, file_id: str) -> Optional[dict[str, torch.Tensor]]:
         """Compute piano roll using base class method."""
-        midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+        midi_path = utils.get_midi_path(file_id=file_id, midi_dirs=[self.midi_dir, self.extra_midi_dir])
         try:
             piano_roll = utils.create_piano_roll_fast(
                 path_to_midi_file=midi_path,

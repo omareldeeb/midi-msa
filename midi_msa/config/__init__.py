@@ -19,6 +19,7 @@ class BaseConfig:
     # Data paths
     midi_dir: Optional[str] = None
     annotation_dir: str = ''
+    extra_midi_dir: str = ''
     # Optional cache paths
     piano_roll_dir: Optional[str] = None
     sslm_dir: Optional[str] = None

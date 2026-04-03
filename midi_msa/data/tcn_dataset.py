@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Union
 import torch
 
 from .base_dataset import BaseMidiDataset
-from .utils import widen_temporal_events, get_piano_roll_cache_path, get_sslm_cache_path, compute_sslms_from_midi_path, load_annotation
+from .utils import widen_temporal_events, get_piano_roll_cache_path, get_sslm_cache_path, compute_sslms_from_midi_path, load_annotation, get_midi_path
 from .label_preprocessor import preprocess_labels
 
 
@@ -14,6 +14,7 @@ class TCNMidiDataset(BaseMidiDataset):
         self,
         midi_dir: Union[str, Path],
         annotation_dir: Union[str, Path],
+        extra_midi_dir: Union[str, Path],
         midi_files: Optional[List[str]] = None,
         target_ticks_per_beat: int = 4,
         segment_function_vocab: Optional[List[str]] = None,
@@ -41,6 +42,7 @@ class TCNMidiDataset(BaseMidiDataset):
             midi_dir=midi_dir,
             annotation_dir=annotation_dir,
             midi_files=midi_files,
+            extra_midi_dir=extra_midi_dir,
             piano_roll_dir=piano_roll_dir,
             sslm_dir=sslm_dir,
         )
@@ -115,7 +117,7 @@ class TCNMidiDataset(BaseMidiDataset):
                 sslm_far = sslm_data["sslm_far"]
             else:
                 # Merge piano roll across channels for SSLM computation by summing
-                midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+                midi_path = get_midi_path(file_id=file_id, midi_dirs=[self.midi_dir, self.extra_midi_dir])
                 sslm_near, sslm_far = compute_sslms_from_midi_path(p=midi_path,
                                                                    target_ticks_per_beat=self.target_ticks_per_beat)
                 if sslm_cache_path:

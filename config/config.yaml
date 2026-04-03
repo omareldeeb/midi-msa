@@ -5,6 +5,7 @@ defaults:
 # Data paths
 midi_dir: /Users/omar/Projects/ComposersAssistant/lmd_full
 annotation_dir: /Users/omar/Documents/Projects/midi-msa/slms_data/v1.1.1  # If provided for USG, overrides markers_qn_path and measures_qn_path (new format); required for TCN
+extra_midi_dir: "C:\\permissive-midi\\permissive-midi-MIT\\mctl-symphony"
 # Optional cache paths
 piano_roll_dir: /Volumes/ExtremePro/piano_roll_dir
 sslm_dir: /Volumes/ExtremePro/sslm_dir

@@ -4,7 +4,6 @@ from typing import List, Dict, Optional, Union
 from ..data import utils
 import torch
 from tqdm import tqdm
-import json
 from .label_preprocessor import preprocess_labels
 import bisect
 import torch.nn.functional as F
@@ -14,6 +13,7 @@ class USGMidiDataset(BaseMidiDataset):
     def __init__(self,
                  midi_dir: Union[str, Path],
                  annotation_dir: Union[str, Path],
+                 extra_midi_dir: Union[str, Path],
                  midi_files: Optional[List[str]] = None,
                  target_ticks_per_beat: int = 4,
                  window_half_ticks: int = 256,
@@ -44,6 +44,7 @@ class USGMidiDataset(BaseMidiDataset):
             label_map=label_map,
             midi_dir=midi_dir,
             annotation_dir=annotation_dir,
+            extra_midi_dir=extra_midi_dir,
             midi_files=midi_files,
             piano_roll_dir=piano_roll_dir,
             sslm_dir=sslm_dir,
@@ -62,7 +63,7 @@ class USGMidiDataset(BaseMidiDataset):
                 sslm_cache_path = utils.get_sslm_cache_path(file_id, self.sslm_dir, self.target_ticks_per_beat)
                 if (not sslm_cache_path) or (not sslm_cache_path.exists()):
                     # Merge piano roll across channels for SSLM computation by summing
-                    midi_path = self.midi_dir / f"{file_id[0]}" / f"{file_id}.mid"
+                    midi_path = utils.get_midi_path(file_id=file_id, midi_dirs=[self.midi_dir, self.extra_midi_dir])
                     sslm_near, sslm_far = utils.compute_sslms_from_midi_path(p=midi_path,
                                                                              target_ticks_per_beat=self.target_ticks_per_beat)
                     if sslm_cache_path:

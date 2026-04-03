@@ -74,6 +74,7 @@ class TCNTrainer(BaseTrainer):
         dataset_args = {
             "midi_dir": self.cfg.midi_dir,
             "annotation_dir": self.cfg.annotation_dir,
+            "extra_midi_dir": self.cfg.extra_midi_dir,
             "piano_roll_dir": self.cfg.piano_roll_dir,
             "target_ticks_per_beat": self.cfg.target_ticks_per_beat,
             "compute_beats": self.cfg.compute_beats,

@@ -1,5 +1,6 @@
 import bisect
 import collections
+import os.path
 import statistics
 import json
 from dataclasses import dataclass
@@ -1502,6 +1503,17 @@ def load_annotation(p: str):
         line[1] = line[1].rstrip('\n')
         res.append([float(line[0]), str(line[1])])
     return res
+
+
+def get_midi_path(file_id: str, midi_dirs: list[Path]):
+    for folder in midi_dirs:
+        path = folder / f"{file_id[0]}" / f"{file_id}.mid"
+        if os.path.exists(path):
+            return path
+        path = folder / f"{file_id}.mid"
+        if os.path.exists(path):
+            return path
+    raise ValueError(f'No path to midi file {file_id} found')
 
 
 def generic_precision(numerator, n_retrieved):

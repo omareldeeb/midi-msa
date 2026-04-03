@@ -49,6 +49,11 @@ class USGTrainer(BaseTrainer):
                 for file in files:
                     if not file.startswith('.') and (file.endswith('.mid') or file.endswith('.midi')):
                         all_midi_files.append(os.path.join(root, file))
+            if self.cfg.extra_midi_dir:
+                for root, _, files in os.walk(self.cfg.extra_midi_dir):
+                    for file in files:
+                        if not file.startswith('.') and (file.endswith('.mid') or file.endswith('.midi')):
+                            all_midi_files.append(os.path.join(root, file))
             np.random.shuffle(all_midi_files)
             num_val = int(len(all_midi_files) * val_split)
             files_dict = {
@@ -73,6 +78,7 @@ class USGTrainer(BaseTrainer):
         cfg_dict = {
             'midi_dir': self.cfg.midi_dir,
             'annotation_dir': self.cfg.annotation_dir,
+            'extra_midi_dir': self.cfg.extra_midi_dir,
             'target_ticks_per_beat': self.cfg.target_ticks_per_beat,
             'window_half_ticks': self.cfg.window_half_ticks,
             'pad_boundary_patches': self.cfg.pad_boundary_patches,
@@ -348,7 +354,6 @@ class USGTrainer(BaseTrainer):
         # Compute aggregate metrics
         all_metrics["loss"] = sum(all_losses) / len(all_losses)
         all_metrics["f1_avg"] = sum(all_f1s) / len(all_f1s)
-        # TODO change primary_optimization_metric to include label if we are computing labels
         all_metrics['primary_optimization_metric'] = (all_metrics['f1_avg'] + all_metrics['f1_avg']) / 2
 
         return all_metrics
