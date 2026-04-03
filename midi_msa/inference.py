@@ -479,10 +479,7 @@ def run_tcn_inference(
         boundary_ticks = [
             int(x) for x in np.where(boundary_probs > cfg.boundary_threshold)[0]
         ]
-        predicted_label_indices = np.array(
-            [int(function_probs[:, tick].argmax()) for tick in boundary_ticks],
-            dtype=int,
-        )
+        predicted_label_indices = None
 
     if not boundary_ticks or boundary_ticks[0] != 0:
         boundary_ticks = [0] + boundary_ticks
@@ -494,12 +491,11 @@ def run_tcn_inference(
         if segment_slice.shape[-1] == 0:
             segment_slice = function_probs[:, start_tick : start_tick + 1]
 
-        label_scores = segment_slice.mean(axis=-1)
-        label_idx = (
-            int(predicted_label_indices[i])
-            if i < len(predicted_label_indices)
-            else int(label_scores.argmax())
-        )
+        label_scores = segment_slice.sum(axis=-1)
+        if predicted_label_indices is not None and i < len(predicted_label_indices):
+            label_idx = int(predicted_label_indices[i])
+        else:
+            label_idx = int(label_scores.argmax())
         label_probabilities = segment_probability_dict(label_scores, segment_vocab)
 
         predictions.append(
