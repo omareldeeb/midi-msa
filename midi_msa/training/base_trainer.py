@@ -142,7 +142,7 @@ class BaseTrainer(ABC):
         pass
 
     @abstractmethod
-    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
+    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float], epoch: int) -> float:
         """Extract the primary metric for early stopping."""
         pass
 
@@ -246,7 +246,7 @@ class BaseTrainer(ABC):
                 )
 
                 # Check improvement
-                val_metric = self.get_val_metric_for_early_stopping(val_metrics)
+                val_metric = self.get_val_metric_for_early_stopping(val_metrics, epoch)
                 improved = self.update_best_metric(val_metric)
 
                 # Save checkpoint for this fold (periodically or if best)

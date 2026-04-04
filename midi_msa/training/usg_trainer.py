@@ -358,6 +358,6 @@ class USGTrainer(BaseTrainer):
 
         return all_metrics
 
-    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
+    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float], epoch: int) -> float:
         """Use average loss for early stopping."""
         return val_metrics["primary_optimization_metric"]

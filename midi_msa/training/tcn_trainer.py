@@ -298,6 +298,7 @@ class TCNTrainer(BaseTrainer):
                                   function_activation=self.cfg.function_output_activation,
                                   )
 
-    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float]) -> float:
+    def get_val_metric_for_early_stopping(self, val_metrics: Dict[str, float], epoch: int) -> float:
         """Use validation loss for early stopping."""
-        return val_metrics["primary_optimization_metric"]
+        multiplier = min(1.0, epoch / 29)  # penalize early epochs
+        return val_metrics["primary_optimization_metric"] * multiplier
