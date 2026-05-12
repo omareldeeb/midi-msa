@@ -121,7 +121,7 @@ class TCNTrainer(BaseTrainer):
         """
         embeddings: (D, T)
         boundaries: list[int] sorted, including 0
-        returns: (D, num_segments)
+        returns: (num_segments, D)
         """
         pooled = []
         for i, start in enumerate(boundaries):
@@ -131,34 +131,44 @@ class TCNTrainer(BaseTrainer):
         return torch.stack(pooled)
 
     def nt_xent_loss(self, embeddings, boundaries, labels, temperature=0.1):
+        assert embeddings.shape[0] == 1, 'nt_xent_loss only implemented for batch_size == 1'
         embeddings = embeddings.squeeze(0)  # (D, T)
-        segment_embeddings = self.pool_segments(embeddings, boundaries)  # (D, #segments)
+        segment_embeddings = self.pool_segments(embeddings, boundaries)  # (#segments, D)
         z = segment_embeddings
 
-        z = nn.functional.normalize(z, dim=0)
+        z = nn.functional.normalize(z, dim=1)
         sim = torch.matmul(z, z.T) / temperature  # (S, S)
         sim_max, _ = sim.max(dim=1, keepdim=True)
         sim = sim - sim_max  # numerical stability
 
         labels = torch.tensor([self.segment_function_vocab_train.index(x) for x in labels], device=sim.device)
         mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # positives
-        # pos_counts = mask.sum(dim=1)
-        # valid = pos_counts > 0
-        # if valid.sum() == 0:
-        #     return torch.tensor(0, device=embeddings.device, requires_grad=True)
 
         # remove self-comparisons
         diag = torch.eye(sim.size(0), device=sim.device).bool()
         mask = mask & ~diag
 
         exp_sim = torch.exp(sim)
+        exp_sim = exp_sim * (~diag)
         denom = exp_sim.sum(dim=1)
         pos = exp_sim * mask
         valid_rows = pos.sum(dim=1) > 0
         if valid_rows.sum() == 0:
-            return torch.tensor(0.0, device=segment_embeddings.device)
+            return segment_embeddings.sum() * 0.0
+            # return torch.tensor(0.0, device=segment_embeddings.device)
 
-        loss = -torch.log((pos.sum(dim=1)[valid_rows] + 1e-8) / denom[valid_rows])
+        # old log of sum loss
+        old_loss = -torch.log((pos.sum(dim=1)[valid_rows] + 1e-8) / denom[valid_rows])
+
+        # sum of logs loss (SupCon loss: https://arxiv.org/pdf/2004.11362 eq 2)
+        diag = torch.eye(sim.size(0), device=sim.device).bool()
+        sim_masked = sim.masked_fill(diag, float('-inf'))
+        log_denom = torch.logsumexp(sim_masked, dim=1)
+        log_probs = sim - log_denom.unsqueeze(1)  # sim is the log of exp_sim, so log_probs = log(exp_sim/denom), where denom = sum of exp(sim)
+        pos_log_probs = log_probs * mask
+        pos_sum = pos_log_probs.sum(dim=1)
+        pos_counts = mask.sum(dim=1)
+        loss = -pos_sum[valid_rows] / pos_counts[valid_rows]
 
         return loss.mean()
 
