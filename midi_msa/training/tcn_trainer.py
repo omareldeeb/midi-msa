@@ -105,13 +105,15 @@ class TCNTrainer(BaseTrainer):
             batch_size=1,  # TCN processes full sequences; batch size 1
             shuffle=True,
             num_workers=self.cfg.num_workers,
+            persistent_workers=True if self.cfg.num_workers else False,
             pin_memory=True,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=1,  # TCN processes full sequences; batch size 1
             shuffle=False,
-            num_workers=self.cfg.num_workers,
+            num_workers=0,
+            persistent_workers=False,
             pin_memory=True,
         )
 
@@ -258,9 +260,9 @@ class TCNTrainer(BaseTrainer):
             sslm_far = batch.get("sslm_far")
 
             if sslm_near is not None:
-                sslm_near = sslm_near.to(torch.float32).to(self.device)
+                sslm_near = sslm_near.to(self.device)  # already float32
             if sslm_far is not None:
-                sslm_far = sslm_far.to(torch.float32).to(self.device)
+                sslm_far = sslm_far.to(self.device)  # already float32
 
             targets = {
                 k: v.to(self.device)

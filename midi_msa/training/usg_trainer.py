@@ -186,7 +186,10 @@ class USGTrainer(BaseTrainer):
 
         # Create dataloaders
         train_loader = DataLoader(
-            dataset_train, batch_size=self.cfg.batch_size, shuffle=True
+            dataset_train, batch_size=self.cfg.batch_size, shuffle=True,
+            num_workers=self.cfg.num_workers,
+            persistent_workers=True if self.cfg.num_workers else False,
+            pin_memory=True
         )
 
         # val_loader_tubb = DataLoader(
@@ -196,7 +199,7 @@ class USGTrainer(BaseTrainer):
         #     dataset_val_non_tubb, batch_size=self.cfg.batch_size, shuffle=False
         # )
         val_loader = DataLoader(
-            dataset_val, batch_size=self.cfg.batch_size, shuffle=False
+            dataset_val, batch_size=self.cfg.batch_size, shuffle=False, pin_memory=True
         )
 
         # Return val loaders as iterable of (name, dataloader) tuples

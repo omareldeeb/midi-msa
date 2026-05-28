@@ -141,7 +141,8 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                     (gt_boundary_ticks[:-1], gt_boundary_ticks[1:])
                 )
 
-                # always throw out the first tick (whether "Start" or "Verse" or whatever)
+                # if boundary_f1_discard_first_and_last then:
+                # always throw out the first tick (whether "Start" or "Verse" or whatever), and
                 # always throw out the last tick, whether "End" or not
                 for i, x in enumerate(predicted_boundary_ticks):
                     if i == 0 or i == len(predicted_boundary_ticks) - 1:
@@ -288,19 +289,19 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
                     label_accuracy_after_segment_picking = a_numerator/a_denominator
                     total_label_accuracy_after_segment_picking += label_accuracy_after_segment_picking
 
-                    # Compute F1 for function labels
-                    f1 = multiclass_f1_score(
-                        torch.tensor([segment_vocab_val.index(x) for x in predicted_labels_by_tick]),
-                        torch.tensor([segment_vocab_val.index(x) for x in true_labels_by_tick]),
-                        num_classes=len(segment_vocab_val),
-                        average=None,
-                    )
-
-                    true_labels_set = set(true_labels_by_tick)
-                    for label_idx, label in enumerate(segment_vocab_val):
-                        if label in true_labels_set:
-                            label_f1 = f1[label_idx].item()
-                            total_label_f1[label] += label_f1
+                    if 0:
+                        # Compute F1 for function labels
+                        f1 = multiclass_f1_score(
+                            torch.tensor([segment_vocab_val.index(x) for x in predicted_labels_by_tick]),
+                            torch.tensor([segment_vocab_val.index(x) for x in true_labels_by_tick]),
+                            num_classes=len(segment_vocab_val),
+                            average=None,
+                        )
+                        true_labels_set = set(true_labels_by_tick)
+                        for label_idx, label in enumerate(segment_vocab_val):
+                            if label in true_labels_set:
+                                label_f1 = f1[label_idx].item()
+                                total_label_f1[label] += label_f1
 
             if label_map_val == label_map_train:
                 pbar.set_postfix({
@@ -345,5 +346,7 @@ def validate_tcn_model(model, val_loader, label_map_train, segment_vocab_train, 
         metrics['label_accuracy_global'] = accuracy_global_numerator / accuracy_global_denominator if accuracy_global_denominator != 0 else 0
         metrics['label_accuracy_after_segment_picking'] = total_label_accuracy_after_segment_picking / num_boundary_batches
         metrics['primary_optimization_metric'] = (metrics['boundary_f1'] + metrics['label_accuracy_after_segment_picking']) / 2
+        # TEMPORARY OVERRIDE FOR SWEEP
+        # metrics['primary_optimization_metric'] = metrics['boundary_f1']
 
     return metrics
